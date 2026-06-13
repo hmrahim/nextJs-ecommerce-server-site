@@ -1,9 +1,5 @@
 'use strict';
-const User = require('../models/User');
-const crudFactory = require('../utils/crudFactory');
+// TODO: implement user controller methods
+// const { ApiResponse } = require('../utils/apiHelpers');
 
-module.exports = crudFactory(User, {
-  searchFields: ["firstName","lastName","email","phone"],
-  filterFields: ["role","isActive"],
-  resourceName: 'User',
-});
+module.exports = {};

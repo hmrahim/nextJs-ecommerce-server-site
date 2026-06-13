@@ -1,9 +1,5 @@
 'use strict';
-const Wishlist = require('../models/Wishlist.model');
-const crudFactory = require('../utils/crudFactory');
+// TODO: implement wishlist controller methods
+// const { ApiResponse } = require('../utils/apiHelpers');
 
-module.exports = crudFactory(Wishlist, {
-  searchFields: [],
-  filterFields: ["userId"],
-  resourceName: 'Wishlist',
-});
+module.exports = {};

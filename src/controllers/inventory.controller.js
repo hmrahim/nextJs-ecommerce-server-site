@@ -1,9 +1,5 @@
 'use strict';
-const Inventory = require('../models/Inventory.model');
-const crudFactory = require('../utils/crudFactory');
+// TODO: implement inventory controller methods
+// const { ApiResponse } = require('../utils/apiHelpers');
 
-module.exports = crudFactory(Inventory, {
-  searchFields: ["variantSku"],
-  filterFields: ["warehouseId","productId"],
-  resourceName: 'Inventory', populate: ["productId","warehouseId"],
-});
+module.exports = {};

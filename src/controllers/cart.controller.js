@@ -1,9 +1,5 @@
 'use strict';
-const Cart = require('../models/Cart.model');
-const crudFactory = require('../utils/crudFactory');
+// TODO: implement cart controller methods
+// const { ApiResponse } = require('../utils/apiHelpers');
 
-module.exports = crudFactory(Cart, {
-  searchFields: [],
-  filterFields: ["userId","sessionId"],
-  resourceName: 'Cart',
-});
+module.exports = {};

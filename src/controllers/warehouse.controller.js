@@ -1,9 +1,5 @@
 'use strict';
-const Warehouse = require('../models/Warehouse.model');
-const crudFactory = require('../utils/crudFactory');
+// TODO: implement warehouse controller methods
+// const { ApiResponse } = require('../utils/apiHelpers');
 
-module.exports = crudFactory(Warehouse, {
-  searchFields: ["name","code"],
-  filterFields: ["isActive"],
-  resourceName: 'Warehouse',
-});
+module.exports = {};
