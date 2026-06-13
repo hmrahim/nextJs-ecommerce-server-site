@@ -2,7 +2,8 @@
 'use strict';
 
 const mongoose = require('mongoose');
-const Category = require('../models/Category');
+const Category = require('../../models/CategoryModel');
+
 
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
 
