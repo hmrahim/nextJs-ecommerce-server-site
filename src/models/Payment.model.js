@@ -48,5 +48,5 @@ paymentSchema.virtual('totalRefunded').get(function () {
   return this.refunds.reduce((sum, r) => sum + r.amount, 0);
 });
 
-const Payment = mongoose.model('Payment', paymentSchema);
+const Payment = mongoose.models.Payment || mongoose.model('Payment', paymentSchema);
 module.exports = Payment;

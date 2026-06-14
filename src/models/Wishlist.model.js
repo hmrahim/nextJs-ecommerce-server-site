@@ -33,5 +33,5 @@ wishlistSchema.virtual('itemCount').get(function () {
   return this.items.length;
 });
 
-const Wishlist = mongoose.model('Wishlist', wishlistSchema);
+const Wishlist = mongoose.models.Wishlist || mongoose.model('Wishlist', wishlistSchema);
 module.exports = Wishlist;

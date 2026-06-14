@@ -31,5 +31,5 @@ auditLogSchema.index({ action: 1 });
 auditLogSchema.index({ createdAt: -1 });
 auditLogSchema.index({ createdAt: 1 }, { expireAfterSeconds: 365 * 24 * 60 * 60 }); // auto-delete after 1 year
 
-const AuditLog = mongoose.model('AuditLog', auditLogSchema);
+const AuditLog = mongoose.models.AuditLog || mongoose.model('AuditLog', auditLogSchema);
 module.exports = AuditLog;

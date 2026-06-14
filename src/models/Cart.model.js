@@ -40,5 +40,5 @@ cartSchema.virtual('itemCount').get(function () {
   return this.items.reduce((sum, item) => sum + item.qty, 0);
 });
 
-const Cart = mongoose.model('Cart', cartSchema);
+const Cart = mongoose.models.Cart || mongoose.model('Cart', cartSchema);
 module.exports = Cart;

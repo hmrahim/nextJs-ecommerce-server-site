@@ -41,5 +41,5 @@ shipmentSchema.index({ warehouseId: 1 });
 shipmentSchema.index({ trackingNumber: 1 }, { sparse: true });
 shipmentSchema.index({ status: 1 });
 
-const Shipment = mongoose.model('Shipment', shipmentSchema);
+const Shipment = mongoose.models.Shipment || mongoose.model('Shipment', shipmentSchema);
 module.exports = Shipment;

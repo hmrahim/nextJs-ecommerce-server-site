@@ -40,5 +40,5 @@ inventorySchema.pre('save', function (next) {
   next();
 });
 
-const Inventory = mongoose.model('Inventory', inventorySchema);
+const Inventory = mongoose.models.Inventory || mongoose.model('Inventory', inventorySchema);
 module.exports = Inventory;

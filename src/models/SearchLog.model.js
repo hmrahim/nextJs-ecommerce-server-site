@@ -21,5 +21,5 @@ searchLogSchema.index({ query: 'text' });
 searchLogSchema.index({ searchedAt: -1 });
 searchLogSchema.index({ searchedAt: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 }); // auto-delete after 180 days
 
-const SearchLog = mongoose.model('SearchLog', searchLogSchema);
+const SearchLog = mongoose.models.SearchLog || mongoose.model('SearchLog', searchLogSchema);
 module.exports = SearchLog;

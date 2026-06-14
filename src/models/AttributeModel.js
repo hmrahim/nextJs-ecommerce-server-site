@@ -61,4 +61,4 @@ attributeSchema.pre('save', function (next) {
   next();
 });
 
-module.exports = mongoose.model('Attribute', attributeSchema);
+module.exports = mongoose.models.Attribute || mongoose.model('Attribute', attributeSchema);

@@ -215,9 +215,19 @@ exports.updateProduct = async (req, res) => {
             }
         }
 
+        /* ── never overwrite variants from the product form ──
+           Variants are managed exclusively by /admin/products/:id/variants endpoints.
+           Including `variants: []` in $set would wipe the embedded array each save. */
+        const updatePayload = { ...req.body };
+        delete updatePayload.variants;
+        // If the product already has variants, ignore manual `stock` edits
+        // (stock is derived from sum of variant stocks via syncProductVariants).
+        const existing = await Product.findById(req.params.id).select('variants').lean();
+        if (existing?.variants?.length) delete updatePayload.stock;
+
         const updated = await Product.findByIdAndUpdate(
             req.params.id,
-            { $set: req.body },
+            { $set: updatePayload },
             { new: true, runValidators: true }
         )
             .populate('category', 'name slug')

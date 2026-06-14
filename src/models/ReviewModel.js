@@ -45,5 +45,5 @@ reviewSchema.post('save', async function () {
   }
 });
 
-const Review = mongoose.model('Review', reviewSchema);
+const Review = mongoose.models.Review || mongoose.model('Review', reviewSchema);
 module.exports = Review;

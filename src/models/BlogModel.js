@@ -125,4 +125,4 @@ blogSchema.virtual('url').get(function () {
   return `/blog/${this.slug}`;
 });
 
-module.exports = mongoose.model('Blog', blogSchema);
+module.exports = mongoose.models.Blog || mongoose.model('Blog', blogSchema);

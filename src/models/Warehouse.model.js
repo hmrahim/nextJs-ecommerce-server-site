@@ -19,5 +19,5 @@ const warehouseSchema = new mongoose.Schema(
 warehouseSchema.index({ isActive: 1 });
 warehouseSchema.index({ city: 1, country: 1 });
 
-const Warehouse = mongoose.model('Warehouse', warehouseSchema);
+const Warehouse = mongoose.models.Warehouse || mongoose.model('Warehouse', warehouseSchema);
 module.exports = Warehouse;

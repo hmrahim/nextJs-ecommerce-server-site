@@ -1,19 +1,8 @@
 'use strict';
 
-const Product = require('../../models/ProductModel');
-
-
-
-/* ══════════════════════════════════════════════════════════════
-   PUBLIC PRODUCT CONTROLLER
-   Schema field names (from Product.js):
-     category / subCategory / subSubCategory  (NOT categoryId)
-     brand                                    (NOT brandId)
-     price / comparePrice                     (NOT basePrice)
-     featured                                 (NOT isFeatured)
-     avgRating / reviewCount                  (NOT rating)
-     status / isActive
-══════════════════════════════════════════════════════════════ */
+const Category             = require('../../models/CategoryModel');
+const Product              = require('../../models/ProductModel');
+const ProductVariantModel  = require('../../models/ProductVariantModel');
 
 const PUBLIC_FILTER = { status: 'active', isActive: true };
 const PUBLIC_SELECT = '-cost -trackInventory';
@@ -50,31 +39,50 @@ const paginate = (total, page, limit) => ({
   limit: Number(limit),
 });
 
+/* Helper: attach active variants from ProductVariantModel to a product */
+const attachVariants = async (product) => {
+  if (!product?._id) return product;
+  const variants = await ProductVariantModel
+    .find({ product: product._id, isActive: true })
+    .select('-cost -__v')
+    .sort({ sortOrder: 1, createdAt: 1 })
+    .lean();
+  product.variants = variants;
+
+  // Derived attribute summary (e.g. { Color: [{label,data}], Size: [...] })
+  const attrMap = {};
+  for (const v of variants) {
+    for (const a of v.attributes || []) {
+      const key = a.attributeName;
+      if (!attrMap[key]) attrMap[key] = { slug: a.attributeSlug, values: [] };
+      if (!attrMap[key].values.some((x) => x.valueId === a.valueId)) {
+        attrMap[key].values.push({
+          valueId:    a.valueId,
+          valueLabel: a.valueLabel,
+          valueData:  a.valueData || '',
+        });
+      }
+    }
+  }
+  product.variantAttributes = Object.entries(attrMap).map(([name, v]) => ({
+    name, slug: v.slug, values: v.values,
+  }));
+  return product;
+};
+
 /* ══════════════════════════════════════════════════════════════
    1. GET ALL PRODUCTS
-   GET /api/products
-══════════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════════════════ */
 exports.getAllPublicProducts = async (req, res) => {
   try {
     const {
-      page            = 1,
-      limit           = 20,
-      sort            = '-createdAt',
-      category,
-      subCategory,
-      subSubCategory,
-      brand,
-      tags,
-      featured,
-      freeShipping,
-      inStock,
-      minPrice,
-      maxPrice,
-      rating,
+      page = 1, limit = 20, sort = '-createdAt',
+      category, subCategory, subSubCategory, brand,
+      tags, featured, freeShipping, inStock,
+      minPrice, maxPrice, rating,
     } = req.query;
 
     const filter = { ...PUBLIC_FILTER };
-
     if (category)       filter.category       = category;
     if (subCategory)    filter.subCategory    = subCategory;
     if (subSubCategory) filter.subSubCategory = subSubCategory;
@@ -85,18 +93,13 @@ exports.getAllPublicProducts = async (req, res) => {
 
     const priceFilter = buildPriceFilter(minPrice, maxPrice);
     if (priceFilter)    filter.price          = priceFilter;
-
     if (rating)         filter.avgRating      = { $gte: Number(rating) };
 
     const skip  = (Number(page) - 1) * Number(limit);
     const total = await Product.countDocuments(filter);
 
     const products = await withPopulates(
-      Product.find(filter)
-        .select(PUBLIC_SELECT)
-        .sort(resolveSort(sort))
-        .skip(skip)
-        .limit(Number(limit))
+      Product.find(filter).select(PUBLIC_SELECT).sort(resolveSort(sort)).skip(skip).limit(Number(limit))
     ).lean({ virtuals: true });
 
     return res.status(200).json({
@@ -111,20 +114,17 @@ exports.getAllPublicProducts = async (req, res) => {
 };
 
 /* ══════════════════════════════════════════════════════════════
-   2. GET PRODUCT BY SLUG
-   GET /api/products/:slug
-══════════════════════════════════════════════════════════════ */
+   2. GET PRODUCT BY SLUG  (includes variants)
+═══════════════════════════════════════════════════════════════ */
 exports.getProductBySlug = async (req, res) => {
   try {
     const product = await withPopulates(
-      Product.findOne({ slug: req.params.slug, ...PUBLIC_FILTER })
-        .select(PUBLIC_SELECT)
+      Product.findOne({ slug: req.params.slug, ...PUBLIC_FILTER }).select(PUBLIC_SELECT)
     ).lean({ virtuals: true });
 
-    if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
-    }
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
 
+    await attachVariants(product);
     return res.status(200).json({ success: true, data: product });
   } catch (err) {
     console.error('getProductBySlug:', err);
@@ -133,22 +133,17 @@ exports.getProductBySlug = async (req, res) => {
 };
 
 /* ══════════════════════════════════════════════════════════════
-   3. GET PRODUCT BY SKU
-   GET /api/products/sku/:sku
-══════════════════════════════════════════════════════════════ */
+   3. GET PRODUCT BY SKU  (includes variants)
+═══════════════════════════════════════════════════════════════ */
 exports.getProductBySku = async (req, res) => {
   try {
     const product = await withPopulates(
-      Product.findOne({
-        sku: req.params.sku.toUpperCase(),
-        ...PUBLIC_FILTER,
-      }).select(PUBLIC_SELECT)
+      Product.findOne({ sku: req.params.sku.toUpperCase(), ...PUBLIC_FILTER }).select(PUBLIC_SELECT)
     ).lean({ virtuals: true });
 
-    if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
-    }
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
 
+    await attachVariants(product);
     return res.status(200).json({ success: true, data: product });
   } catch (err) {
     console.error('getProductBySku:', err);
@@ -158,29 +153,16 @@ exports.getProductBySku = async (req, res) => {
 
 /* ══════════════════════════════════════════════════════════════
    4. FULL-TEXT SEARCH
-   GET /api/products/search?q=
-══════════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════════════════ */
 exports.searchProducts = async (req, res) => {
   try {
-    const {
-      q,
-      page     = 1,
-      limit    = 20,
-      sort,
-      minPrice,
-      maxPrice,
-      category,
-      brand,
-      rating,
-      inStock,
-    } = req.query;
+    const { q, page = 1, limit = 20, sort, minPrice, maxPrice, category, brand, rating, inStock } = req.query;
 
     if (!q || !q.trim()) {
       return res.status(400).json({ success: false, message: 'Search query (q) is required' });
     }
 
     const filter = { $text: { $search: q.trim() }, ...PUBLIC_FILTER };
-
     if (category)           filter.category  = category;
     if (brand)              filter.brand     = brand;
     if (inStock === 'true') filter.stock     = { $gt: 0 };
@@ -192,16 +174,11 @@ exports.searchProducts = async (req, res) => {
     const skip  = (Number(page) - 1) * Number(limit);
     const total = await Product.countDocuments(filter);
 
-    const sortStage = sort
-      ? resolveSort(sort)
-      : { score: { $meta: 'textScore' } };
+    const sortStage = sort ? resolveSort(sort) : { score: { $meta: 'textScore' } };
 
     const products = await withPopulates(
       Product.find(filter, sort ? undefined : { score: { $meta: 'textScore' } })
-        .select(PUBLIC_SELECT)
-        .sort(sortStage)
-        .skip(skip)
-        .limit(Number(limit))
+        .select(PUBLIC_SELECT).sort(sortStage).skip(skip).limit(Number(limit))
     ).lean({ virtuals: true });
 
     return res.status(200).json({
@@ -218,17 +195,12 @@ exports.searchProducts = async (req, res) => {
 
 /* ══════════════════════════════════════════════════════════════
    5. FEATURED PRODUCTS
-   GET /api/products/featured
-══════════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════════════════ */
 exports.getFeaturedProducts = async (req, res) => {
   try {
     const { limit = 10 } = req.query;
-
     const products = await withPopulates(
-      Product.find({ featured: true, ...PUBLIC_FILTER })
-        .select(PUBLIC_SELECT)
-        .sort('-createdAt')
-        .limit(Number(limit))
+      Product.find({ featured: true, ...PUBLIC_FILTER }).select(PUBLIC_SELECT).sort('-createdAt').limit(Number(limit))
     ).lean({ virtuals: true });
 
     return res.status(200).json({ success: true, results: products });
@@ -240,19 +212,13 @@ exports.getFeaturedProducts = async (req, res) => {
 
 /* ══════════════════════════════════════════════════════════════
    6. RELATED PRODUCTS
-   GET /api/products/:id/related
-══════════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════════════════ */
 exports.getRelatedProducts = async (req, res) => {
   try {
     const { limit = 8 } = req.query;
-
     const source = await Product.findOne({ _id: req.params.id, ...PUBLIC_FILTER })
-      .select('category brand tags')
-      .lean();
-
-    if (!source) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
-    }
+      .select('category brand tags').lean();
+    if (!source) return res.status(404).json({ success: false, message: 'Product not found' });
 
     const filter = {
       _id: { $ne: source._id },
@@ -265,10 +231,7 @@ exports.getRelatedProducts = async (req, res) => {
     };
 
     const products = await withPopulates(
-      Product.find(filter)
-        .select(PUBLIC_SELECT)
-        .sort('-avgRating -stock')
-        .limit(Number(limit))
+      Product.find(filter).select(PUBLIC_SELECT).sort('-avgRating -stock').limit(Number(limit))
     ).lean({ virtuals: true });
 
     return res.status(200).json({ success: true, results: products });
@@ -280,59 +243,28 @@ exports.getRelatedProducts = async (req, res) => {
 
 /* ══════════════════════════════════════════════════════════════
    7. PRODUCTS BY CATEGORY SLUG
-   GET /api/categories/:slug/products
-══════════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════════════════ */
 exports.getProductsByCategory = async (req, res) => {
   try {
-    const {
-      page           = 1,
-      limit          = 20,
-      sort           = '-createdAt',
-      subCategory,
-      subSubCategory,
-      brand,
-      tags,
-      featured,
-      inStock,
-      minPrice,
-      maxPrice,
-      rating,
-    } = req.query;
+    const cat = await Category.findOne({ slug: req.params.slug }).lean();
+    if (!cat) return res.status(404).json({ success: false, message: 'Category not found' });
 
-    const Category = require('../models/Category');
-    const category = await Category.findOne({ slug: req.params.slug }).lean();
-
-    if (!category) {
-      return res.status(404).json({ success: false, message: 'Category not found' });
-    }
-
-    const filter = { ...PUBLIC_FILTER, category: category._id };
-
-    if (subCategory)        filter.subCategory    = subCategory;
-    if (subSubCategory)     filter.subSubCategory = subSubCategory;
-    if (brand)              filter.brand          = brand;
-    if (featured)           filter.featured       = featured === 'true';
-    if (inStock === 'true') filter.stock          = { $gt: 0 };
-    if (tags)               filter.tags           = { $in: tags.split(',').map((t) => t.trim()) };
-
-    const priceFilter = buildPriceFilter(minPrice, maxPrice);
-    if (priceFilter)        filter.price          = priceFilter;
-    if (rating)             filter.avgRating      = { $gte: Number(rating) };
+    const { page = 1, limit = 20, sort = '-createdAt' } = req.query;
+    const filter = {
+      ...PUBLIC_FILTER,
+      $or: [{ category: cat._id }, { subCategory: cat._id }, { subSubCategory: cat._id }],
+    };
 
     const skip  = (Number(page) - 1) * Number(limit);
     const total = await Product.countDocuments(filter);
 
     const products = await withPopulates(
-      Product.find(filter)
-        .select(PUBLIC_SELECT)
-        .sort(resolveSort(sort))
-        .skip(skip)
-        .limit(Number(limit))
+      Product.find(filter).select(PUBLIC_SELECT).sort(resolveSort(sort)).skip(skip).limit(Number(limit))
     ).lean({ virtuals: true });
 
     return res.status(200).json({
       success: true,
-      category: { name: category.name, slug: category.slug },
+      category: { _id: cat._id, name: cat.name, slug: cat.slug },
       ...paginate(total, page, limit),
       results: products,
     });
