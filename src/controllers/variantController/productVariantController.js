@@ -6,7 +6,7 @@ const Product = require('../../models/ProductModel');
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 
-// Build "Red / M" from attributes
+// Build "Red / M" from attributes array
 function buildVariantTitle(attributes = []) {
   return attributes.map(a => a.valueLabel).join(' / ');
 }
@@ -25,7 +25,7 @@ function toEmbeddedVariant(v) {
   };
 }
 
-// Re-build Product.variants & aggregated stock from ProductVariantModel
+// Re-build Product.variants & variantAttributes & aggregated stock
 async function syncProductVariants(productId) {
   if (!productId) return;
   const variants = await ProductVariantModel
@@ -38,12 +38,39 @@ async function syncProductVariants(productId) {
     .filter(v => v.isActive !== false)
     .reduce((sum, v) => sum + (Number(v.stock) || 0), 0);
 
-  // Use updateOne to bypass full validators (sku/category etc. on Product)
+  // variantAttributes rebuild — প্রতিটা attribute এর unique values collect করো
+  const attrMap = {};
+  variants.forEach(v => {
+    (v.attributes || []).forEach(a => {
+      if (!attrMap[a.attributeSlug]) {
+        attrMap[a.attributeSlug] = {
+          name: a.attributeName,
+          slug: a.attributeSlug,
+          values: new Map(),
+        };
+      }
+      if (!attrMap[a.attributeSlug].values.has(a.valueId)) {
+        attrMap[a.attributeSlug].values.set(a.valueId, {
+          valueId:    a.valueId,
+          valueLabel: a.valueLabel,
+          valueData:  a.valueData || '',
+        });
+      }
+    });
+  });
+
+  const variantAttributes = Object.values(attrMap).map(attr => ({
+    name:   attr.name,
+    slug:   attr.slug,
+    values: [...attr.values.values()],
+  }));
+
   await Product.updateOne(
     { _id: productId },
     {
       $set: {
         variants: embedded,
+        variantAttributes,
         ...(variants.length ? { stock: totalStock } : {}),
       },
     },
@@ -129,11 +156,29 @@ exports.createVariant = async (req, res) => {
 
 /* ══════════════════════════════════════════════════════════════════════════
    POST /api/admin/products/:productId/variants/bulk
+   
+   Payload:
+   {
+     attributeSets: [
+       { attributeId, attributeName, attributeSlug, values: [{ valueId, valueLabel, valueData }] },
+       { attributeId, attributeName, attributeSlug, values: [...] },
+     ],
+     defaultPrice: 500,
+     defaultStock: 10,
+     variantPrices: { "Red / S": 490, "Blue / M": 510 }  // optional, individual mode
+   }
+   
+   Result: Red/S, Red/M, Red/L, Green/S, Green/M, Green/L ... (cartesian)
 ═══════════════════════════════════════════════════════════════════════════ */
 exports.bulkGenerateVariants = async (req, res) => {
   try {
     const { productId } = req.params;
-    const { attributeSets = [], defaultPrice = 0, defaultStock = 0, variantPrices = {} } = req.body;
+    const {
+      attributeSets = [],
+      defaultPrice  = 0,
+      defaultStock  = 0,
+      variantPrices = {},
+    } = req.body;
 
     const product = await Product.findById(productId);
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
@@ -142,7 +187,18 @@ exports.bulkGenerateVariants = async (req, res) => {
       return res.status(400).json({ success: false, message: 'attributeSets required' });
     }
 
-    // Cartesian product
+    // ── Validate: প্রতিটা attributeSet এ কমপক্ষে ১টা value থাকতে হবে ──
+    const invalidSet = attributeSets.find(s => !s.values || s.values.length === 0);
+    if (invalidSet) {
+      return res.status(400).json({
+        success: false,
+        message: `Attribute "${invalidSet.attributeName}" এ কোনো value select করা হয়নি`,
+      });
+    }
+
+    // ── Cartesian product ──────────────────────────────────────────────────────
+    // attributeSets: [{ values: [{valueId, valueLabel, valueData}] }, ...]
+    // Result: সব combinations — [[attr1val1, attr2val1], [attr1val1, attr2val2], ...]
     const cartesian = (sets) =>
       sets.reduce((acc, set) =>
         acc.flatMap(combo =>
@@ -161,21 +217,28 @@ exports.bulkGenerateVariants = async (req, res) => {
 
     const combinations = cartesian(attributeSets);
 
+    // Existing titles এনে duplicate এড়াও
     const existingTitles = new Set(
       (await ProductVariantModel.find({ product: productId }, 'variantTitle').lean())
         .map(v => v.variantTitle)
     );
 
     const toInsert = [];
-    let skipped   = 0;
+    let skipped    = 0;
 
     for (const combo of combinations) {
       const variantTitle = buildVariantTitle(combo);
-      if (existingTitles.has(variantTitle)) { skipped++; continue; }
 
-      const variantPrice = (variantPrices[variantTitle] !== undefined && variantPrices[variantTitle] !== '')
-        ? parseFloat(variantPrices[variantTitle])
-        : defaultPrice;
+      if (existingTitles.has(variantTitle)) {
+        skipped++;
+        continue;
+      }
+
+      // Price: individual mode এ variantPrices lookup, fallback to defaultPrice
+      const variantPrice =
+        variantPrices[variantTitle] !== undefined && variantPrices[variantTitle] !== ''
+          ? parseFloat(variantPrices[variantTitle])
+          : Number(defaultPrice) || 0;
 
       toInsert.push({
         product:      productId,
@@ -184,11 +247,12 @@ exports.bulkGenerateVariants = async (req, res) => {
         price:        variantPrice,
         comparePrice: 0,
         cost:         0,
-        stock:        defaultStock,
+        stock:        Number(defaultStock) || 0,
         isActive:     true,
         sortOrder:    0,
       });
-      existingTitles.add(variantTitle);
+
+      existingTitles.add(variantTitle); // prevent in-batch duplicates
     }
 
     let created = 0;
@@ -197,6 +261,7 @@ exports.bulkGenerateVariants = async (req, res) => {
       created = inserted.length;
     }
 
+    // Product এর variantAttributes ও stock sync করো
     await syncProductVariants(productId);
 
     res.status(201).json({
@@ -206,7 +271,6 @@ exports.bulkGenerateVariants = async (req, res) => {
     });
   } catch (err) {
     console.error('bulkGenerateVariants error:', err);
-    // Even on partial error try to sync
     try { await syncProductVariants(req.params.productId); } catch (_) {}
     res.status(500).json({ success: false, message: err.message });
   }
@@ -263,7 +327,12 @@ exports.deleteAllVariants = async (req, res) => {
     const { productId } = req.params;
     const result = await ProductVariantModel.deleteMany({ product: productId });
 
-    await syncProductVariants(productId);
+    // variantAttributes ও clear করো product থেকে
+    await Product.updateOne(
+      { _id: productId },
+      { $set: { variants: [], variantAttributes: [], stock: 0 } },
+      { strict: false }
+    );
 
     res.json({ success: true, message: `${result.deletedCount} variant(s) deleted` });
   } catch (err) {

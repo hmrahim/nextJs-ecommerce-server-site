@@ -222,6 +222,8 @@ exports.updateProduct = async (req, res) => {
         delete updatePayload.variants;
         // If the product already has variants, ignore manual `stock` edits
         // (stock is derived from sum of variant stocks via syncProductVariants).
+
+
         const existing = await Product.findById(req.params.id).select('variants').lean();
         if (existing?.variants?.length) delete updatePayload.stock;
 
