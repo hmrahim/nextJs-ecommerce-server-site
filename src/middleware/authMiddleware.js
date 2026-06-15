@@ -12,14 +12,21 @@ const User = require('../models/User');
 ───────────────────────────────────────────────────────────── */
 const protect = async (req, res, next) => {
   try {
-    // ১. Authorization header চেক
+    // ১. Authorization header চেক (normal requests)
     const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith('Bearer ')) {
+    let token;
+
+    if (auth && auth.startsWith('Bearer ')) {
+      token = auth.split(' ')[1];
+    } else if (req.query?.token) {
+      // 🔔 EventSource (SSE) custom header পাঠাতে পারে না,
+      // তাই token query param থেকেও accept করি (SSE routes-এর জন্য)
+      token = req.query.token;
+    }
+
+    if (!token) {
       return res.status(401).json({ message: 'Not authenticated. Please log in.' });
     }
-    
-
-    const token = auth.split(' ')[1];
 
     // ২. Token verify
     let decoded;

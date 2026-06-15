@@ -5,6 +5,11 @@ dns.setServers(['8.8.8.8', '8.8.4.4'])
 
 const mongoose = require('mongoose');
 const logger   = require('../utils/logger');
+const realtimePlugin = require('../utils/realtimePlugin');
+
+// 🔴 Register realtime plugin globally BEFORE any model is compiled.
+// Every schema created afterwards will emit socket events on CRUD.
+mongoose.plugin(realtimePlugin);
 
 const MONGO_OPTIONS = {
   autoIndex: process.env.NODE_ENV !== 'production',

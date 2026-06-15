@@ -2,9 +2,11 @@
 /* ── Load env vars FIRST — before any other require ─────── */
 require('dotenv').config();
 
+const http      = require('http');
 const app       = require('./app');
 const connectDB = require('./config/database');
 const logger    = require('./utils/logger');
+const { initSocket } = require('./utils/socket');
 
 const PORT = process.env.PORT || 5000;
 
@@ -15,10 +17,14 @@ const PORT = process.env.PORT || 5000;
   // 1. Connect to MongoDB
   await connectDB();
 
-  // 2. Start HTTP server
-  const server = app.listen(PORT, () => {
+  // 2. Create HTTP server + attach Socket.IO
+  const server = http.createServer(app);
+  initSocket(server);
+
+  // 3. Start listening
+  server.listen(PORT, () => {
     logger.info(`🚀 Server started | mode: ${process.env.NODE_ENV} | port: ${PORT}`);
-   
+    logger.info(`📡 Socket.IO ready on ws://localhost:${PORT}`);
   });
 
   /* ── Graceful shutdown ───────────────────────────────────── */
