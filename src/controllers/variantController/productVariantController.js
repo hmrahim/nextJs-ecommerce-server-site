@@ -366,11 +366,49 @@ exports.toggleVariant = async (req, res) => {
 exports.getPublicVariants = async (req, res) => {
   try {
     const { productId } = req.params;
-    const variants = await ProductVariantModel
+
+    // 1. Try ProductVariant collection first
+    let variants = await ProductVariantModel
       .find({ product: productId, isActive: true })
       .select('-cost -createdAt -updatedAt -__v')
       .sort({ sortOrder: 1 })
       .lean();
+
+    // 2. If none found, fall back to embedded variants inside Product document
+    if (!variants.length) {
+      const Product = require('../../models/ProductModel');
+      const product = await Product.findById(productId).select('variants variantAttributes').lean();
+      if (product?.variants?.length) {
+        variants = product.variants.map((v) => {
+          // Convert embedded attrs object { Color: 'Red', Size: 'S' } to
+          // the same shape as ProductVariant.attributes array so the
+          // frontend VariantPicker works without any changes.
+          const attrDefs = product.variantAttributes || [];
+          const attributes = Object.entries(v.attrs || {}).map(([name, label]) => {
+            const attrDef = attrDefs.find((a) => a.name === name);
+            const valDef  = attrDef?.values?.find((val) => val.valueLabel === label);
+            return {
+              attributeName:  name,
+              attributeSlug:  attrDef?.slug || name.toLowerCase(),
+              valueId:        valDef?.valueId || label,
+              valueLabel:     label,
+              valueData:      valDef?.valueData || '',
+            };
+          });
+          return {
+            _id:          v._id,
+            product:      productId,
+            sku:          v.sku,
+            price:        v.price,
+            stock:        v.stock,
+            isActive:     true,
+            attributes,
+            variantTitle: v.variantTitle || null,
+            image:        v.image || null,
+          };
+        });
+      }
+    }
 
     res.json({ success: true, data: variants });
   } catch (err) {

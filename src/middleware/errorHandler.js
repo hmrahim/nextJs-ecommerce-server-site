@@ -5,6 +5,10 @@ const logger       = require('../utils/logger');
 
 // eslint-disable-next-line no-unused-vars
 const errorHandler = (err, _req, res, _next) => {
+  console.error('ERROR_DEBUG name:', err.name);
+  console.error('ERROR_DEBUG message:', err.message);
+  console.error('ERROR_DEBUG status:', err.statusCode);
+  if (err.errors) console.error('ERROR_DEBUG errors:', JSON.stringify(err.errors));
   let error = Object.assign(new ApiError(err.statusCode || 500, err.message), err);
 
   /* ── Mongoose: invalid ObjectId ──────────────────────────── */

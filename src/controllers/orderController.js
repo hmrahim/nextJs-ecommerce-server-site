@@ -32,11 +32,67 @@ const Order   = require('../models/OrderModel');
 const User    = require('../models/User');
 const Cart    = require('../models/Cart.model');
 const Product = require('../models/ProductModel');
+const ProductVariant = require('../models/ProductVariantModel');
 const Coupon  = require('../models/CouponModel');
 const { broadcast } = require('../utils/sseManager');
 const { emitChange } = require('../utils/socket');
 
 /* ═══════════════ HELPERS ═══════════════ */
+
+/* Convert ProductVariant.attributes array → { Color: "Red", Size: "M" } */
+const attrsArrayToObject = (attrs = []) => {
+  if (!Array.isArray(attrs)) return attrs || {};
+  return attrs.reduce((acc, a) => {
+    if (a?.attributeName) acc[a.attributeName] = a.valueLabel ?? a.valueData ?? '';
+    return acc;
+  }, {});
+};
+
+/* Look up a variant in EITHER product.variants (embedded)
+   OR the separate ProductVariant collection. Returns normalized or null.
+   variantSku = real sku string অথবা MongoDB _id (24-char hex) */
+const lookupVariant = async (product, variantSku) => {
+  if (!variantSku || variantSku === 'default') return null;
+
+  // Embedded variants — sku দিয়ে match
+  const embedded = (product.variants || []).find((v) => v.sku === variantSku);
+  if (embedded) {
+    const attrs = embedded.attrs instanceof Map
+      ? Object.fromEntries(embedded.attrs)
+      : (embedded.attrs || {});
+    return {
+      source: 'embedded',
+      _id:    embedded._id,
+      sku:    embedded.sku || String(embedded._id),
+      price:  embedded.price,
+      stock:  embedded.stock ?? 0,
+      image:  embedded.image || '',
+      title:  embedded.variantTitle || null,
+      attrs,
+    };
+  }
+
+  // Separate ProductVariant collection:
+  // variantSku একটা ObjectId হতে পারে (sku field না থাকলে cart _id store করে)
+  const isObjectId = /^[a-f\d]{24}$/i.test(variantSku);
+  const query = isObjectId
+    ? { $or: [{ _id: variantSku, product: product._id }, { product: product._id, sku: variantSku }] }
+    : { product: product._id, sku: variantSku };
+
+  const v = await ProductVariant.findOne(query).lean();
+  if (!v) return null;
+
+  return {
+    source: 'collection',
+    _id:    v._id,
+    sku:    v.sku || String(v._id),
+    price:  v.price,
+    stock:  v.stock ?? 0,
+    image:  v.image || '',
+    title:  v.variantTitle || null,
+    attrs:  attrsArrayToObject(v.attributes),
+  };
+};
 
 const paginate = (query) => {
   const page  = Math.max(1, parseInt(query.page)  || 1);
@@ -112,11 +168,20 @@ exports.createOrder = async (req, res) => {
       }
       let currentStock = product.stock ?? 0;
       let currentPrice = product.price;
+      let snapshotAttrs = item.variantAttrs ?? null;
+      let variantImage  = product.images?.[0]?.url || product.image || '';
+
       if (item.variantSku && item.variantSku !== 'default') {
-        const variant = (product.variants || []).find((v) => v.sku === item.variantSku);
+        const variant = await lookupVariant(product, item.variantSku);
         if (!variant) return res.status(409).json({ message: `Variant পাওয়া যাচ্ছে না।` });
         currentStock = variant.stock ?? 0;
         currentPrice = variant.price ?? product.price;
+        // Always snapshot attrs from the canonical variant so the order
+        // record has them even if the frontend forgot to send variantAttrs.
+        if (!snapshotAttrs || (typeof snapshotAttrs === 'object' && !Object.keys(snapshotAttrs).length)) {
+          snapshotAttrs = variant.attrs || null;
+        }
+        if (variant.image) variantImage = variant.image;
       }
       if (currentStock < item.quantity) {
         return res.status(409).json({ message: `"${item.productName}" এ মাত্র ${currentStock}টি available।` });
@@ -127,8 +192,8 @@ exports.createOrder = async (req, res) => {
         productId:    item.productId,
         variantSku:   item.variantSku || 'default',
         productName:  product.name,
-        productImage: product.images?.[0]?.url || product.image || '',
-        variantAttrs: item.variantAttrs ?? null,
+        productImage: variantImage,
+        variantAttrs: snapshotAttrs,
         quantity:     item.quantity,
         unitPrice:    currentPrice,
         lineTotal,
@@ -168,13 +233,22 @@ exports.createOrder = async (req, res) => {
       total:          serverTotal,
     });
 
-    /* Decrement stock */
+    /* Decrement stock — handle both embedded variants AND separate ProductVariant collection */
     for (const item of verifiedItems) {
       if (item.variantSku !== 'default') {
-        await Product.updateOne(
+        const embeddedRes = await Product.updateOne(
           { _id: item.productId, 'variants.sku': item.variantSku },
           { $inc: { 'variants.$.stock': -item.quantity } }
         );
+        if (!embeddedRes.matchedCount) {
+          // Variant lives in the separate collection
+          // variantSku = ObjectId string অথবা real sku — দুটোই handle করো
+          const isObjId = /^[a-f\d]{24}$/i.test(item.variantSku);
+          const variantFilter = isObjId
+            ? { $or: [{ _id: item.variantSku, product: item.productId }, { product: item.productId, sku: item.variantSku }] }
+            : { product: item.productId, sku: item.variantSku };
+          await ProductVariant.updateOne(variantFilter, { $inc: { stock: -item.quantity } });
+        }
       } else {
         await Product.findByIdAndUpdate(item.productId, { $inc: { stock: -item.quantity } });
       }
@@ -245,10 +319,17 @@ exports.cancelOrder = async (req, res) => {
     // restore stock & free up rider
     for (const item of order.items) {
       if (item.variantSku !== 'default') {
-        await Product.updateOne(
+        const embeddedRes = await Product.updateOne(
           { _id: item.productId, 'variants.sku': item.variantSku },
           { $inc: { 'variants.$.stock': item.quantity } }
         );
+        if (!embeddedRes.matchedCount) {
+          const isObjId = /^[a-f\d]{24}$/i.test(item.variantSku);
+          const variantFilter = isObjId
+            ? { $or: [{ _id: item.variantSku, product: item.productId }, { product: item.productId, sku: item.variantSku }] }
+            : { product: item.productId, sku: item.variantSku };
+          await ProductVariant.updateOne(variantFilter, { $inc: { stock: item.quantity } });
+        }
       } else {
         await Product.findByIdAndUpdate(item.productId, { $inc: { stock: item.quantity } });
       }
@@ -366,7 +447,7 @@ exports.adminGetAll = async (req, res) => {
   }
 };
 
-/* ═══════════════ ADMIN — GET ONE ═══════════════ */
+/* ═══════════════ ADMIN — GET ONE (with full product + variant details) ═══════════════ */
 exports.adminGetById = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
@@ -374,7 +455,126 @@ exports.adminGetById = async (req, res) => {
       .populate('rider.riderId', 'firstName lastName email phone avatar riderProfile')
       .lean();
     if (!order) return res.status(404).json({ message: 'Order not found' });
-    return res.json({ data: decorate(order) });
+
+    /* ── Enrich every order item with full product + selected variant data
+       so admin dashboard can show: brand, slug, full image gallery,
+       variant attributes (Color / Size / etc.), live stock, base/compare price ── */
+    const productIds = [...new Set((order.items || []).map((i) => String(i.productId)).filter(Boolean))];
+    const products = productIds.length
+      ? await Product.find({ _id: { $in: productIds } })
+          .populate('brand', 'name slug logo')
+          .populate('category', 'name slug')
+          .select('name slug sku images price comparePrice stock variants attributes brand category status isActive')
+          .lean()
+      : [];
+    const productMap = new Map(products.map((p) => [String(p._id), p]));
+
+    /* Pre-load variants from the separate collection (fallback) */
+    const variantSkus = (order.items || [])
+      .map((i) => i.variantSku)
+      .filter((s) => s && s !== 'default');
+    let separateVariantMap = new Map();
+    if (variantSkus.length && productIds.length) {
+      const variantDocs = await ProductVariant.find({
+        product: { $in: productIds },
+        sku:     { $in: variantSkus },
+      }).lean();
+      separateVariantMap = new Map(
+        variantDocs.map((v) => [`${String(v.product)}::${v.sku}`, v])
+      );
+    }
+
+    const enrichedItems = (order.items || []).map((it) => {
+      const p = productMap.get(String(it.productId));
+      let variant = null;
+      let variantAttrs = it.variantAttrs || null;
+      let variantImage = it.productImage || null;
+      let currentStock = null;
+      let currentPrice = null;
+      let comparePrice = null;
+
+      if (p) {
+        if (it.variantSku && it.variantSku !== 'default') {
+          // 1) embedded
+          const v = (p.variants || []).find((x) => x.sku === it.variantSku);
+          if (v) {
+            variant = {
+              _id: v._id,
+              sku: v.sku,
+              price: v.price,
+              stock: v.stock,
+              attrs: v.attrs instanceof Map
+                ? Object.fromEntries(v.attrs)
+                : (v.attrs || {}),
+              image: v.image || null,
+              title: v.variantTitle || null,
+            };
+            if (!variantAttrs || Object.keys(variantAttrs).length === 0) {
+              variantAttrs = variant.attrs;
+            }
+            if (variant.image) variantImage = variant.image;
+            currentStock = v.stock;
+            currentPrice = v.price;
+          } else {
+            // 2) separate collection fallback
+            const sv = separateVariantMap.get(`${String(it.productId)}::${it.variantSku}`);
+            if (sv) {
+              const attrs = attrsArrayToObject(sv.attributes);
+              variant = {
+                _id:   sv._id,
+                sku:   sv.sku,
+                price: sv.price,
+                stock: sv.stock,
+                attrs,
+                image: sv.image || null,
+                title: sv.variantTitle || null,
+              };
+              if (!variantAttrs || Object.keys(variantAttrs).length === 0) {
+                variantAttrs = attrs;
+              }
+              if (sv.image) variantImage = sv.image;
+              currentStock = sv.stock;
+              currentPrice = sv.price;
+            }
+          }
+        }
+        if (currentStock == null) currentStock = p.stock;
+        if (currentPrice == null) currentPrice = p.price;
+        comparePrice = p.comparePrice ?? null;
+      }
+
+      return {
+        ...it,
+        variantAttrs,
+        variantImage,
+        // Full product context for the admin order-detail UI
+        product: p
+          ? {
+              _id: p._id,
+              name: p.name,
+              slug: p.slug,
+              sku: p.sku,
+              images: p.images || [],
+              price: p.price,
+              comparePrice: p.comparePrice ?? null,
+              stock: p.stock,
+              brand: p.brand || null,
+              category: p.category || null,
+              attributes: p.attributes || [],
+              variantsCount: (p.variants || []).length,
+              status: p.status,
+              isActive: p.isActive,
+            }
+          : null,
+        variant,
+        currentStock,
+        currentPrice,
+        comparePrice,
+      };
+    });
+
+    const enrichedOrder = { ...order, items: enrichedItems };
+    return res.json({ data: decorate(enrichedOrder) });
   } catch (err) {
     console.error('[adminGetById]', err);
     return res.status(500).json({ message: 'Could not fetch order' });
@@ -388,15 +588,10 @@ exports.adminGetById = async (req, res) => {
  *
  * Pending → Confirmed + Rider assigned in one step (Amazon/Noon style).
  */
+/* adminConfirmOrder — RIDER OPTIONAL */
 exports.adminConfirmOrder = async (req, res) => {
   try {
     const { riderId, note } = req.body;
-    if (!riderId) {
-      return res.status(400).json({ message: 'Rider অবশ্যই select করতে হবে confirm করার আগে।' });
-    }
-
-    const rider = await User.findOne({ _id: riderId, role: 'rider', isActive: true });
-    if (!rider) return res.status(404).json({ message: 'Selected rider not found / inactive' });
 
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
@@ -407,33 +602,77 @@ exports.adminConfirmOrder = async (req, res) => {
 
     order.status      = 'confirmed';
     order.confirmedAt = new Date();
-    order.rider = {
-      riderId:     rider._id,
-      riderName:   `${rider.firstName} ${rider.lastName}`.trim(),
-      riderPhone:  rider.phone,
-      vehicleType: rider.riderProfile?.vehicleType || 'bike',
-      assignedAt:  new Date(),
-      assignedBy:  req.user._id,
-      note:        note || null,
-    };
-    order.statusHistory.push({
-      status: 'confirmed',
-      note:   note ? `Confirmed & assigned to ${order.rider.riderName}. ${note}` : `Confirmed & assigned to ${order.rider.riderName}`,
-      changedBy: req.user._id,
-    });
+
+    if (riderId) {
+      const rider = await User.findOne({ _id: riderId, role: 'rider', isActive: true });
+      if (!rider) return res.status(404).json({ message: 'Selected rider not found / inactive' });
+
+      order.rider = {
+        riderId:     rider._id,
+        riderName:   `${rider.firstName} ${rider.lastName}`.trim(),
+        riderPhone:  rider.phone,
+        vehicleType: rider.riderProfile?.vehicleType || 'bike',
+        assignedAt:  new Date(),
+        assignedBy:  req.user._id,
+        note:        note || null,
+      };
+      order.statusHistory.push({
+        status: 'confirmed',
+        note:   note
+          ? `Confirmed & assigned to ${order.rider.riderName}. ${note}`
+          : `Confirmed & assigned to ${order.rider.riderName}`,
+        changedBy: req.user._id,
+      });
+      await User.findByIdAndUpdate(rider._id, { $inc: { 'riderProfile.activeOrders': 1 } });
+    } else {
+      order.statusHistory.push({
+        status:    'confirmed',
+        note:      note || 'Confirmed by admin (no rider assigned yet)',
+        changedBy: req.user._id,
+      });
+    }
 
     await order.save();
-    await User.findByIdAndUpdate(rider._id, { $inc: { 'riderProfile.activeOrders': 1 } });
-
     emitOrderEvent('order_updated', order);
 
-    return res.json({ message: 'Order confirmed & rider assigned', data: order });
+    const message = riderId ? 'Order confirmed & rider assigned' : 'Order confirmed';
+    return res.json({ message, data: order });
   } catch (err) {
     console.error('[adminConfirmOrder]', err);
     return res.status(500).json({ message: 'Could not confirm order' });
   }
 };
 
+/* adminUpdateStatus — REMOVE rider guard for confirmed status */
+exports.adminUpdateStatus = async (req, res) => {
+  try {
+    const { status, note } = req.body;
+    const allowed = ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'refunded'];
+    if (!allowed.includes(status)) return res.status(400).json({ message: `Invalid status: ${status}` });
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    order.status = status;
+    if (status === 'shipped')   order.shippedAt   = order.shippedAt   || new Date();
+    if (status === 'delivered') order.deliveredAt = order.deliveredAt || new Date();
+    if (status === 'cancelled') order.cancelledAt = new Date();
+
+    order.statusHistory.push({ status, note: note || '', changedBy: req.user._id });
+
+    if (status === 'delivered' && order.paymentMethod === 'cod') {
+      order.paymentStatus = 'paid';
+    }
+    if (status === 'refunded') order.paymentStatus = 'refunded';
+
+    await order.save();
+    emitOrderEvent('order_updated', order);
+    return res.json({ message: 'Status updated', data: order });
+  } catch (err) {
+    console.error('[adminUpdateStatus]', err);
+    return res.status(500).json({ message: 'Could not update status' });
+  }
+};
 /* ═══════════════ ADMIN — REASSIGN RIDER ═══════════════ */
 exports.adminAssignRider = async (req, res) => {
   try {

@@ -1,4 +1,3 @@
-
 const mongoose = require('mongoose');
 
 const cartItemSchema = new mongoose.Schema(
@@ -6,7 +5,7 @@ const cartItemSchema = new mongoose.Schema(
     productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
     variantSku:{ type: String, required: true },
     qty:       { type: Number, required: true, min: 1 },
-    price:     { type: Number, required: true, min: 0 }, // price snapshot at add-time
+    price:     { type: Number, required: true, min: 0 },
   },
   { _id: false }
 );
@@ -14,9 +13,9 @@ const cartItemSchema = new mongoose.Schema(
 const cartSchema = new mongoose.Schema(
   {
     userId:    { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-    sessionId: { type: String, default: null },  // for guest carts
+    sessionId: { type: String, default: null },
     items:     { type: [cartItemSchema], default: [] },
-    expiresAt: { type: Date, default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }, // 7 days
+    expiresAt: { type: Date, default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
   },
   {
     timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
@@ -28,14 +27,12 @@ const cartSchema = new mongoose.Schema(
 /* ── Indexes ─────────────────────────────────────────────── */
 cartSchema.index({ userId: 1 });
 cartSchema.index({ sessionId: 1 });
-cartSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // TTL index
+cartSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-/* ── Virtual: total ──────────────────────────────────────── */
+/* ── Virtuals ────────────────────────────────────────────── */
 cartSchema.virtual('total').get(function () {
   return this.items.reduce((sum, item) => sum + item.price * item.qty, 0);
 });
-
-/* ── Virtual: itemCount ──────────────────────────────────── */
 cartSchema.virtual('itemCount').get(function () {
   return this.items.reduce((sum, item) => sum + item.qty, 0);
 });

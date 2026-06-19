@@ -9,6 +9,7 @@ const logger    = require('./utils/logger');
 const { initSocket } = require('./utils/socket');
 
 const PORT = process.env.PORT || 5000;
+console.log('MONGO_URI:', process.env.MONGO_URI ? 'পাওয়া গেছে ✅' : 'পাওয়া যায়নি ❌'); // ← এটা add করো
 
 /* ════════════════════════════════════════════════════
    BOOTSTRAP

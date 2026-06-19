@@ -15,7 +15,7 @@ module.exports = {
   Payment:        require('./Payment.model'),
   Shipment:       require('./Shipment.model'),
   Review:         require('./ReviewModel'),
-  Wishlist:       require('./Wishlist.model'),
+  Wishlist:       require('./WishlistModel'),
   Notification:   require('./Notification.model'),
   SearchLog:      require('./SearchLog.model'),
   AuditLog:       require('./AuditLog.model'),
