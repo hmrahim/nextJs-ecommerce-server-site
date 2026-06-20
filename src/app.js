@@ -20,9 +20,24 @@ app.use(helmet());
 
 app.use(
   cors({
-    origin:      process.env.CLIENT_ORIGIN || '*',
+    origin: function (origin, callback) {
+      const allowedOrigins = [
+        'http://localhost:3000',
+        'http://localhost:3001',
+        process.env.CLIENT_ORIGIN,
+      ].filter(Boolean);
+
+      // Postman বা server-to-server call এর জন্য (origin নেই)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS blocked: ${origin}`));
+      }
+    },
     credentials: true,
-    methods:     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   })
 );
 
