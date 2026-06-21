@@ -1,15 +1,15 @@
 'use strict';
 
-const express        = require('express');
-const helmet         = require('helmet');
-const cors           = require('cors');
-const morgan         = require('morgan');
-const mongoSanitize  = require('express-mongo-sanitize');
-const compression    = require('compression');
+const express = require('express');
+const helmet = require('helmet');
+const cors = require('cors');
+const morgan = require('morgan');
+const mongoSanitize = require('express-mongo-sanitize');
+const compression = require('compression');
 
-const logger         = require('./utils/logger');
-const { ApiError }   = require('./utils/apiHelpers');
-const errorHandler   = require('./middleware/errorHandler');
+const logger = require('./utils/logger');
+const { ApiError } = require('./utils/apiHelpers');
+const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 
@@ -24,6 +24,8 @@ app.use(
       const allowedOrigins = [
         'http://localhost:3000',
         'http://localhost:3001',
+        'https://www.moom24.com',
+        'https://moom24.com',
         process.env.CLIENT_ORIGIN,
       ].filter(Boolean);
 
@@ -60,8 +62,8 @@ app.use('/api', require('./routes/index'));
 ════════════════════════════════════════════════════ */
 app.get('/health', (_req, res) =>
   res.status(200).json({
-    status:    'ok',
-    env:       process.env.NODE_ENV,
+    status: 'ok',
+    env: process.env.NODE_ENV,
     timestamp: new Date().toISOString(),
   })
 );
