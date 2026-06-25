@@ -25,8 +25,15 @@ const cartSchema = new mongoose.Schema(
 );
 
 /* ── Indexes ─────────────────────────────────────────────── */
-cartSchema.index({ userId: 1 });
-cartSchema.index({ sessionId: 1 });
+/* ── Indexes ─────────────────────────────────────────────── */
+cartSchema.index(
+  { userId: 1 },
+  { unique: true, partialFilterExpression: { userId: { exists: true, ne: null } } }
+);
+cartSchema.index(
+  { sessionId: 1 },
+  { unique: true, partialFilterExpression: { sessionId: { exists: true, ne: null } } }
+);
 cartSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 /* ── Virtuals ────────────────────────────────────────────── */

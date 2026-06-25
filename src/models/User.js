@@ -1,3 +1,5 @@
+// 📁 PATH: src/models/User.js
+// ✅ CHANGES: Added emailOtp + emailOtpExpires fields for email verification
 'use strict';
 
 const mongoose = require('mongoose');
@@ -30,16 +32,16 @@ const savedCardSchema = new mongoose.Schema(
 /* ─── Rider Profile Sub-schema (only for role=rider) ─────────── */
 const riderProfileSchema = new mongoose.Schema(
   {
-    vehicleType:   { type: String, enum: ['bike', 'car', 'van', 'cycle', 'foot'], default: 'bike' },
-    vehicleNumber: { type: String, trim: true, default: null },
-    nidNumber:     { type: String, trim: true, default: null },
-    licenseNumber: { type: String, trim: true, default: null },
-    serviceAreas:  { type: [String], default: [] },          // ['Dhanmondi', 'Mirpur', ...]
-    isAvailable:   { type: Boolean, default: true },         // currently accepting orders
-    activeOrders:  { type: Number, default: 0, min: 0 },     // in-progress count
-    completedOrders: { type: Number, default: 0, min: 0 },
-    rating:        { type: Number, default: 5.0, min: 0, max: 5 },
-    joinedAt:      { type: Date, default: Date.now },
+    vehicleType:    { type: String, enum: ['bike', 'car', 'van', 'cycle', 'foot'], default: 'bike' },
+    vehicleNumber:  { type: String, trim: true, default: null },
+    nidNumber:      { type: String, trim: true, default: null },
+    licenseNumber:  { type: String, trim: true, default: null },
+    serviceAreas:   { type: [String], default: [] },
+    isAvailable:    { type: Boolean, default: true },
+    activeOrders:   { type: Number, default: 0, min: 0 },
+    completedOrders:{ type: Number, default: 0, min: 0 },
+    rating:         { type: Number, default: 5.0, min: 0, max: 5 },
+    joinedAt:       { type: Date, default: Date.now },
   },
   { _id: false }
 );
@@ -53,7 +55,6 @@ const userSchema = new mongoose.Schema(
     phone:        { type: String, trim: true },
     passwordHash: { type: String, required: true, select: false },
 
-    /* role — admin/buyer/seller/rider/manager etc. */
     role: {
       type:    String,
       enum:    ['admin', 'buyer', 'seller', 'rider', 'manager'],
@@ -65,14 +66,18 @@ const userSchema = new mongoose.Schema(
     isActive:      { type: Boolean, default: true },
     emailVerified: { type: Boolean, default: false },
 
+    // ── ✅ Email OTP for verification ───────────────────────────
+    emailOtp:        { type: String, select: false },
+    emailOtpExpires: { type: Date,   select: false },
+    // ────────────────────────────────────────────────────────────
+
     addresses:  { type: [addressSchema], default: [] },
     savedCards: { type: [savedCardSchema], default: [] },
 
-    /* Rider-only profile data */
     riderProfile: { type: riderProfileSchema, default: null },
 
     passwordResetToken:   { type: String, select: false },
-    passwordResetExpires: { type: Date, select: false },
+    passwordResetExpires: { type: Date,   select: false },
   },
   {
     timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
@@ -90,9 +95,6 @@ userSchema.pre('save', function (next) {
   if (this.role === 'rider' && !this.riderProfile) {
     this.riderProfile = {};
   }
-  if (this.role !== 'rider') {
-    // keep historical profile but ignore — optional: this.riderProfile = null;
-  }
   next();
 });
 
@@ -101,6 +103,8 @@ userSchema.methods.toPublicJSON = function () {
   delete obj.passwordHash;
   delete obj.passwordResetToken;
   delete obj.passwordResetExpires;
+  delete obj.emailOtp;
+  delete obj.emailOtpExpires;
   return obj;
 };
 

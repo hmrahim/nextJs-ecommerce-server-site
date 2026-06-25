@@ -4,12 +4,16 @@
 const express = require('express');
 const router  = express.Router();
 
-const { signupController, signinController } = require('../controllers/authController');
+const { signupController, signinController, verifyEmailController, resendOtpController, forgotPasswordController, resetPasswordController } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 
 /* ── Public routes (login দরকার নেই) ──────────────────── */
 router.post('/register', signupController);
 router.post('/signin',   signinController);
+router.post('/verify-email',  verifyEmailController);   
+router.post('/resend-otp',    resendOtpController);  
+router.post('/forgot-password', forgotPasswordController);  // ← NEW
+router.post('/reset-password',  resetPasswordController);   // ← NEW   
 
 /* ── Protected route example ───────────────────────────── */
 // /me → logged in user এর নিজের info পাবে

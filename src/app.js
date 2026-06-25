@@ -26,6 +26,7 @@ app.use(
         'http://localhost:3001',
         'https://www.moom24.com',
         'https://moom24.com',
+        'http://localhost:8081',
         process.env.CLIENT_ORIGIN,
       ].filter(Boolean);
 
