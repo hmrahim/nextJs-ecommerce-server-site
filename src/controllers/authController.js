@@ -4,18 +4,15 @@
 //   - verifyEmailController → OTP চেক করে, verified করে, token দেয়
 //   - resendOtpController → নতুন OTP পাঠায়
 //   - signinController → unverified user কে block করে
-//   - forgotPasswordController → password reset OTP পাঠায়   ← NEW
-//   - resetPasswordController  → OTP verify + নতুন password সেট  ← NEW
+//   - signinVerifiedController → OTP verify এর পরে auto-login  ← NEW
+//   - forgotPasswordController → password reset OTP পাঠায়      ← NEW
+//   - resetPasswordController  → OTP verify + নতুন password সেট ← NEW
 'use strict';
 
 const bcrypt = require('bcryptjs');
 const jwt    = require('jsonwebtoken');
 const User   = require('../models/User');
-const {
-  sendVerificationOtp,
-  sendPasswordResetOtp,
-  generateOtp,
-} = require('../services/emailService');
+const { sendVerificationOtp, sendPasswordResetOtp, generateOtp } = require('../services/emailService');
 
 /* ── JWT helper ──────────────────────────────────────────────── */
 const signToken = (id) =>
@@ -85,7 +82,7 @@ exports.signupController = async (req, res) => {
     return res.status(201).json({
       message:              'Account created! Please check your email for the verification code.',
       requiresVerification: true,
-      email,          // frontend এ redirect করার জন্য
+      email,
     });
   } catch (err) {
     console.error('[signupController]', err);
@@ -178,7 +175,7 @@ exports.resendOtpController = async (req, res) => {
     }
 
     /* Rate limit: শেষ OTP পাঠানোর ১ মিনিটের মধ্যে পুনরায় পাঠানো যাবে না */
-    const cooldownMs = 60 * 1000; // 1 minute
+    const cooldownMs = 60 * 1000;
     if (
       user.emailOtpExpires &&
       user.emailOtpExpires > new Date(Date.now() + (OTP_EXPIRY_MINUTES - 1) * 60 * 1000 - cooldownMs)
@@ -228,7 +225,6 @@ exports.signinController = async (req, res) => {
 
     /* ✅ Email verified চেক */
     if (!user.emailVerified) {
-      /* নতুন OTP পাঠিয়ে দাও */
       const otp    = generateOtp();
       const expiry = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
       await User.findByIdAndUpdate(user._id, {
@@ -271,7 +267,50 @@ exports.signinController = async (req, res) => {
 };
 
 /* ══════════════════════════════════════════════════════════════
-   FORGOT PASSWORD  →  email দিলে reset OTP পাঠায়
+   SIGNIN VERIFIED  ← NEW
+   OTP verify সফল হওয়ার পরে NextAuth auto-login এর জন্য।
+   emailVerified=true থাকলেই password ছাড়া token দেয়।
+══════════════════════════════════════════════════════════════ */
+exports.signinVerifiedController = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.emailVerified) {
+      return res.status(403).json({ message: 'Email not verified' });
+    }
+
+    const token = signToken(user._id);
+
+    return res.status(200).json({
+      message: 'Login successful',
+      token,
+      user: {
+        id:            user._id,
+        firstName:     user.firstName,
+        lastName:      user.lastName,
+        email:         user.email,
+        role:          user.role,
+        emailVerified: true,
+      },
+    });
+  } catch (err) {
+    console.error('[signinVerifiedController]', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════
+   FORGOT PASSWORD  ← NEW
+   email দিলে reset OTP পাঠায়
 ══════════════════════════════════════════════════════════════ */
 exports.forgotPasswordController = async (req, res) => {
   try {
@@ -283,13 +322,11 @@ exports.forgotPasswordController = async (req, res) => {
 
     const user = await User.findOne({ email });
 
-    /*
-      Security best practice: user না পেলেও same response দাও
-      যাতে attacker বুঝতে না পারে কোন email registered আছে।
-    */
+    /* Security: user না পেলেও same response দাও */
     if (!user) {
       return res.status(200).json({
         message: 'If this email is registered, a reset code has been sent.',
+        email,
       });
     }
 
@@ -306,7 +343,6 @@ exports.forgotPasswordController = async (req, res) => {
     const otp    = generateOtp();
     const expiry = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
-    /* passwordResetToken ও passwordResetExpires User model-এ আছে */
     await User.findByIdAndUpdate(user._id, {
       passwordResetToken:   otp,
       passwordResetExpires: expiry,
@@ -320,7 +356,6 @@ exports.forgotPasswordController = async (req, res) => {
 
     return res.status(200).json({
       message: 'If this email is registered, a reset code has been sent.',
-      /* dev/debug: production-এ এই দুটো field সরিয়ে দাও */
       email,
     });
   } catch (err) {
@@ -330,7 +365,8 @@ exports.forgotPasswordController = async (req, res) => {
 };
 
 /* ══════════════════════════════════════════════════════════════
-   RESET PASSWORD  →  OTP verify + নতুন password সেট + auto-login
+   RESET PASSWORD  ← NEW
+   OTP verify + নতুন password সেট + auto-login token
 ══════════════════════════════════════════════════════════════ */
 exports.resetPasswordController = async (req, res) => {
   try {
@@ -340,7 +376,6 @@ exports.resetPasswordController = async (req, res) => {
       return res.status(400).json({ message: 'Email, OTP and new password are required' });
     }
 
-    /* passwordResetToken select:false তাই explicitly select করতে হবে */
     const user = await User.findOne({ email }).select(
       '+passwordResetToken +passwordResetExpires +passwordHash'
     );
@@ -362,13 +397,12 @@ exports.resetPasswordController = async (req, res) => {
       return res.status(400).json({ message: 'Invalid code. Please try again.' });
     }
 
-    /* ✅ নতুন password হ্যাশ করে সেট করো, reset fields মুছো */
+    /* ✅ নতুন password সেট, reset fields মুছো */
     user.passwordHash         = await bcrypt.hash(newPassword, 10);
     user.passwordResetToken   = undefined;
     user.passwordResetExpires = undefined;
     await user.save();
 
-    /* Auto-login token */
     const token = signToken(user._id);
 
     return res.status(200).json({
