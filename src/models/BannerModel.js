@@ -3,7 +3,39 @@
 
 const mongoose = require('mongoose');
 
-const PLACEMENT_IDS = [
+// ─── Platform IDs ─────────────────────────────────────────────────────────────
+const PLATFORM_IDS = ['web', 'mobile', 'both'];
+
+// ─── Placement IDs — Web (Next.js App) ────────────────────────────────────────
+const WEB_PLACEMENT_IDS = [
+  'web_home_hero_slider',
+  'web_home_side_panel_1',
+  'web_home_side_panel_2',
+  'web_home_promo_banner_1',
+  'web_home_promo_banner_2',
+  'web_category_page_top',
+  'web_checkout_promo',
+  'web_flash_sale_banner',
+  'web_shop_page_banner',
+  'web_popup',
+];
+
+// ─── Placement IDs — Mobile (Expo App) ────────────────────────────────────────
+const MOBILE_PLACEMENT_IDS = [
+  'mobile_home_hero',
+  'mobile_home_carousel',
+  'mobile_category_banner',
+  'mobile_product_detail_banner',
+  'mobile_cart_promo',
+  'mobile_splash_promo',
+  'mobile_offer_popup',
+];
+
+// ─── All placement IDs combined ───────────────────────────────────────────────
+const ALL_PLACEMENT_IDS = [...WEB_PLACEMENT_IDS, ...MOBILE_PLACEMENT_IDS];
+
+// ─── Legacy placement IDs (for backward compatibility) ────────────────────────
+const LEGACY_PLACEMENT_IDS = [
   'home_hero',
   'home_strip',
   'home_grid_a',
@@ -12,6 +44,8 @@ const PLACEMENT_IDS = [
   'checkout_promo',
   'app_popup',
 ];
+
+const PLACEMENT_IDS = [...ALL_PLACEMENT_IDS, ...LEGACY_PLACEMENT_IDS];
 
 const STATUS_IDS = ['live', 'scheduled', 'paused', 'expired', 'draft'];
 
@@ -42,10 +76,30 @@ const bannerSchema = new mongoose.Schema(
       default:   'Shop now',
     },
 
+    // NEW: Platform field — which platform this banner targets
+    platform: {
+      type:    String,
+      enum:    { values: PLATFORM_IDS, message: 'Invalid platform: {VALUE}' },
+      default: 'both',
+    },
+
+    // UPDATED: Now supports multiple placements (array)
+    placements: {
+      type:    [String],
+      validate: {
+        validator: function(arr) {
+          return arr.every(p => PLACEMENT_IDS.includes(p));
+        },
+        message: 'One or more placements are invalid',
+      },
+      default: [],
+    },
+
+    // KEPT for backward compatibility — single placement (legacy)
     placement: {
       type:     String,
-      required: [true, 'Placement is required'],
-      enum:     { values: PLACEMENT_IDS, message: 'Invalid placement: {VALUE}' },
+      enum:     { values: [...PLACEMENT_IDS, ''], message: 'Invalid placement: {VALUE}' },
+      default:  '',
     },
 
     status: {
@@ -115,12 +169,13 @@ const bannerSchema = new mongoose.Schema(
 );
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
+bannerSchema.index({ platform: 1, status: 1 });
+bannerSchema.index({ placements: 1, status: 1 });
 bannerSchema.index({ placement: 1, status: 1 });
 bannerSchema.index({ priority:  1 });
 bannerSchema.index({ title: 'text' });
 
 // ─── Virtuals ─────────────────────────────────────────────────────────────────
-// CTR — always derived from clicks / impressions, never stored, never stale
 bannerSchema.virtual('ctr').get(function () {
   if (!this.impressions) return 0;
   return Number(((this.clicks / this.impressions) * 100).toFixed(2));
@@ -135,10 +190,14 @@ bannerSchema.pre('validate', function (next) {
 });
 
 // ─── Enum exports for validators / frontend mapping ─────────────────────────
-bannerSchema.statics.PLACEMENT_IDS = PLACEMENT_IDS;
-bannerSchema.statics.STATUS_IDS    = STATUS_IDS;
-bannerSchema.statics.LINK_TYPE_IDS = LINK_TYPE_IDS;
-bannerSchema.statics.DEVICE_IDS    = DEVICE_IDS;
+bannerSchema.statics.PLATFORM_IDS       = PLATFORM_IDS;
+bannerSchema.statics.WEB_PLACEMENT_IDS  = WEB_PLACEMENT_IDS;
+bannerSchema.statics.MOBILE_PLACEMENT_IDS = MOBILE_PLACEMENT_IDS;
+bannerSchema.statics.ALL_PLACEMENT_IDS  = ALL_PLACEMENT_IDS;
+bannerSchema.statics.PLACEMENT_IDS      = PLACEMENT_IDS;
+bannerSchema.statics.STATUS_IDS         = STATUS_IDS;
+bannerSchema.statics.LINK_TYPE_IDS      = LINK_TYPE_IDS;
+bannerSchema.statics.DEVICE_IDS         = DEVICE_IDS;
 
 const Banner = mongoose.models.Banner || mongoose.model('Banner', bannerSchema);
 

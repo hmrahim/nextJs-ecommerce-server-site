@@ -3,6 +3,7 @@
 const Cart           = require('../models/Cart.model');
 const Product        = require('../models/ProductModel');
 const ProductVariant = require('../models/ProductVariantModel');
+const FlashSale      = require('../models/FlashSaleModel');
 const { ApiResponse, ApiError } = require('../utils/apiHelpers');
 const catchAsync     = require('../utils/catchAsync');
 
@@ -49,7 +50,29 @@ const attrsArrayToObject = (attrs) => {
   return out;
 };
 
-const resolveLineItem = async (productId, variantSku) => {
+/**
+ * Apply active flash-sale price (if any) on top of the resolved line item.
+ * Mutates and returns the same object so all call-sites get the discount.
+ */
+const applyFlashSalePrice = async (item) => {
+  if (!item || !item.productId) return item;
+  try {
+    const eff = await FlashSale.getEffectivePriceForProduct(item.productId, item.price);
+    if (eff && eff.salePrice < item.price) {
+      item.originalPrice = item.price;
+      item.price         = eff.salePrice;
+      item.flashSale     = {
+        saleId:        eff.saleId,
+        discountType:  eff.discountType,
+        discountValue: eff.discountValue,
+        endTime:       eff.endTime,
+      };
+    }
+  } catch { /* never block cart on flash-sale errors */ }
+  return item;
+};
+
+const _resolveLineItemRaw = async (productId, variantSku) => {
   const product = await Product.findById(productId);
   if (!product || !product.isActive || product.status !== 'active') {
     throw new ApiError(404, 'Product not found or unavailable.');
@@ -155,6 +178,13 @@ const resolveLineItem = async (productId, variantSku) => {
   };
 };
 
+// Public wrapper used by the rest of the cart controller — always layers
+// the active flash-sale price on top of the catalog/variant price.
+const resolveLineItem = async (productId, variantSku) => {
+  const item = await _resolveLineItemRaw(productId, variantSku);
+  return applyFlashSalePrice(item);
+};
+
 
 const serializeCart = async (cart) => {
   const productIds = [...new Set(cart.items.map((i) => String(i.productId)))];
@@ -185,7 +215,7 @@ const serializeCart = async (cart) => {
     variantMap.set(`${String(v.product)}__${String(v._id)}`, v);
   }
 
-  const items = cart.items.map((item) => {
+  const items = await Promise.all(cart.items.map(async (item) => {
     const product = productMap.get(String(item.productId));
 
     let variantInfo = null;
@@ -219,6 +249,22 @@ const serializeCart = async (cart) => {
       }
     }
 
+    // Apply active flash-sale discount (if any) on the live price for read responses
+    let flashSale = null;
+    try {
+      const eff = await FlashSale.getEffectivePriceForProduct(item.productId, livePrice);
+      if (eff && eff.salePrice < livePrice) {
+        flashSale = {
+          saleId:        eff.saleId,
+          discountType:  eff.discountType,
+          discountValue: eff.discountValue,
+          endTime:       eff.endTime,
+          originalPrice: livePrice,
+        };
+        livePrice = eff.salePrice;
+      }
+    } catch { /* ignore */ }
+
     return {
       productId:    item.productId,
       variantSku:   item.variantSku,
@@ -239,8 +285,9 @@ const serializeCart = async (cart) => {
           }
         : null,
       variant: variantInfo,
+      flashSale,
     };
-  });
+  }));
 
   return {
     _id:       cart._id,

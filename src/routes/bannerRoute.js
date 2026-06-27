@@ -13,6 +13,8 @@ const {
   adminDeleteBanner,
   adminToggleBannerStatus,
   getBannersByPlacement,
+  getBannersByPlatform,
+  getBannersByPlatformAndPlacement,
   trackBannerClick,
   trackBannerImpression,
 } = require('../controllers/bannerController');
@@ -27,29 +29,30 @@ const { protect } = require('../middleware/authMiddleware');
    ADMIN ROUTES  —  /api/admin/banners
 ══════════════════════════════════════════════════════════════════════════════ */
 
-// Stats — /:id এর আগে রাখতে হবে
 router.get('/admin/banners/stats', protect, adminGetBannerStats);
-
-// CRUD
-router.get('/admin/banners',protect, adminGetAllBanners);
-router.post('/admin/banners',protect, validateCreateBanner, adminCreateBanner);
-router.get('/admin/banners/:id',protect, adminGetBannerById);
-router.put('/admin/banners/:id', protect,validateUpdateBanner, adminUpdateBanner);
-router.delete('/admin/banners/:id',protect, adminDeleteBanner);
-
-// Toggle status (live ⇄ paused)
-router.patch('/admin/banners/:id/toggle-status',protect, adminToggleBannerStatus);
+router.get('/admin/banners', protect, adminGetAllBanners);
+router.post('/admin/banners', protect, validateCreateBanner, adminCreateBanner);
+router.get('/admin/banners/:id', protect, adminGetBannerById);
+router.put('/admin/banners/:id', protect, validateUpdateBanner, adminUpdateBanner);
+router.delete('/admin/banners/:id', protect, adminDeleteBanner);
+router.patch('/admin/banners/:id/toggle-status', protect, adminToggleBannerStatus);
 
 /* ══════════════════════════════════════════════════════════════════════════════
    PUBLIC ROUTES
+   ✅ IMPORTANT: specific routes MUST come before wildcard routes
 ══════════════════════════════════════════════════════════════════════════════ */
 
-router.get('/banners/:placement', getBannersByPlacement);
+// ✅ Most specific first — platform + placement
+router.get('/banners/platform/:platform/placement/:placement', getBannersByPlatformAndPlacement);
+
+// ✅ Then platform only
+router.get('/banners/platform/:platform', getBannersByPlatform);
+
+// Analytics — before /:placement so "click"/"impression" don't get caught as placement
 router.patch('/banners/:id/click', trackBannerClick);
 router.patch('/banners/:id/impression', trackBannerImpression);
 
-module.exports = router;
+// ✅ Legacy placement route — last (most generic)
+router.get('/banners/:placement', getBannersByPlacement);
 
-// ─── routes/index.js তে এভাবে mount করো ──────────────────────────────────────
-//
-//  router.use(require('./bannerRoute'));
+module.exports = router;

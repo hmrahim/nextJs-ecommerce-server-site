@@ -1,5 +1,6 @@
 'use strict';
 
+const mongoose             = require('mongoose');
 const Category             = require('../../models/CategoryModel');
 const Product              = require('../../models/ProductModel');
 const ProductVariantModel  = require('../../models/ProductVariantModel');
@@ -115,12 +116,23 @@ exports.getAllPublicProducts = async (req, res) => {
 
 /* ══════════════════════════════════════════════════════════════
    2. GET PRODUCT BY SLUG  (includes variants)
+   Also handles lookup by ObjectId as fallback (e.g. from flash sale links)
 ═══════════════════════════════════════════════════════════════ */
 exports.getProductBySlug = async (req, res) => {
   try {
-    const product = await withPopulates(
-      Product.findOne({ slug: req.params.slug, ...PUBLIC_FILTER }).select(PUBLIC_SELECT)
+    const { slug } = req.params;
+    
+    // First try to find by slug
+    let product = await withPopulates(
+      Product.findOne({ slug, ...PUBLIC_FILTER }).select(PUBLIC_SELECT)
     ).lean({ virtuals: true });
+
+    // If not found by slug, try by ObjectId (fallback for flash sale product links)
+    if (!product && mongoose.isValidObjectId(slug)) {
+      product = await withPopulates(
+        Product.findOne({ _id: slug, ...PUBLIC_FILTER }).select(PUBLIC_SELECT)
+      ).lean({ virtuals: true });
+    }
 
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
 

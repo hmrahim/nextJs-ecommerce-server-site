@@ -7,8 +7,8 @@ const catchAsync  = require('../utils/catchAsync');
 
 // ─── Whitelisted fields (mass-assignment protection) ─────────────────────────
 const ALLOWED_FIELDS = [
-  'title', 'subtitle', 'buttonText', 'placement', 'status', 'priority',
-  'image', 'linkType', 'linkValue', 'startsAt', 'endsAt', 'devices',
+  'title', 'subtitle', 'buttonText', 'platform', 'placements', 'placement',
+  'status', 'priority', 'image', 'linkType', 'linkValue', 'startsAt', 'endsAt', 'devices',
 ];
 
 function sanitizePayload(body = {}, { isCreate = false } = {}) {
@@ -25,11 +25,23 @@ function sanitizePayload(body = {}, { isCreate = false } = {}) {
   // linkValue must be empty when linkType is "none"
   if (payload.linkType === 'none') payload.linkValue = '';
 
+  // Ensure placements is always an array
+  if ('placements' in payload && !Array.isArray(payload.placements)) {
+    payload.placements = payload.placements ? [payload.placements] : [];
+  }
+
   if (isCreate) {
     payload.status    = payload.status    || 'draft';
     payload.priority  = payload.priority  || 5;
     payload.devices   = payload.devices   || 'all';
     payload.linkType  = payload.linkType  || 'url';
+    payload.platform  = payload.platform  || 'both';
+    payload.placements = payload.placements || [];
+  }
+
+  // Backward compat: if placements array has items, set placement to first one
+  if (payload.placements && payload.placements.length > 0 && !payload.placement) {
+    payload.placement = payload.placements[0];
   }
 
   return payload;
@@ -54,14 +66,41 @@ function calcStats(banners) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // ─── GET /admin/banners ────────────────────────────────────────────────────────
-// Query: search, placement (id|all), status (id|all)
+// Query: search, placement (id|all), status (id|all), platform (web|mobile|both|all)
 const adminGetAllBanners = catchAsync(async (req, res) => {
-  const { search, placement, status } = req.query;
+  const { search, placement, status, platform } = req.query;
 
   const filter = {};
 
-  if (placement && placement !== 'all') filter.placement = placement;
-  if (status    && status    !== 'all') filter.status    = status;
+  // Platform filter
+  if (platform && platform !== 'all') {
+    if (platform === 'web') {
+      filter.$or = [{ platform: 'web' }, { platform: 'both' }];
+    } else if (platform === 'mobile') {
+      filter.$or = [{ platform: 'mobile' }, { platform: 'both' }];
+    } else {
+      filter.platform = platform;
+    }
+  }
+
+  // Placement filter — check both legacy `placement` and new `placements` array
+  if (placement && placement !== 'all') {
+    const placementFilter = {
+      $or: [
+        { placement: placement },
+        { placements: placement },
+      ],
+    };
+    // Merge with existing $or if platform filter created one
+    if (filter.$or) {
+      filter.$and = [{ $or: filter.$or }, placementFilter];
+      delete filter.$or;
+    } else {
+      filter.$or = placementFilter.$or;
+    }
+  }
+
+  if (status && status !== 'all') filter.status = status;
 
   if (search) {
     filter.title = new RegExp(search, 'i');
@@ -142,6 +181,7 @@ const adminToggleBannerStatus = catchAsync(async (req, res) => {
 // ─── GET /banners/:placement ─────────────────────────────────────────────────────
 // Returns active (live, within schedule window) banners for a given placement,
 // sorted by priority — for storefront rendering.
+// Supports both legacy single placement and new placements array.
 const getBannersByPlacement = catchAsync(async (req, res) => {
   const { placement } = req.params;
 
@@ -152,7 +192,10 @@ const getBannersByPlacement = catchAsync(async (req, res) => {
   const now = new Date();
 
   const banners = await Banner.find({
-    placement,
+    $or: [
+      { placement: placement },
+      { placements: placement },
+    ],
     status: 'live',
     $and: [
       { $or: [{ startsAt: null }, { startsAt: { $lte: now } }] },
@@ -160,7 +203,67 @@ const getBannersByPlacement = catchAsync(async (req, res) => {
     ],
   })
     .sort({ priority: 1 })
-    .select('title subtitle buttonText image linkType linkValue devices priority')
+    .select('title subtitle buttonText image linkType linkValue devices priority platform placements placement')
+    .lean();
+
+  res.status(200).json({ success: true, data: banners });
+});
+
+// ─── GET /banners/platform/:platform ─────────────────────────────────────────────
+// Returns all live banners for a specific platform (web or mobile)
+const getBannersByPlatform = catchAsync(async (req, res) => {
+  const { platform } = req.params;
+
+  if (!['web', 'mobile'].includes(platform)) {
+    throw new AppError('Invalid platform. Must be "web" or "mobile"', 400);
+  }
+
+  const now = new Date();
+
+  const banners = await Banner.find({
+    $or: [
+      { platform: platform },
+      { platform: 'both' },
+    ],
+    status: 'live',
+    $and: [
+      { $or: [{ startsAt: null }, { startsAt: { $lte: now } }] },
+      { $or: [{ endsAt: null },   { endsAt:   { $gte: now } }] },
+    ],
+  })
+    .sort({ priority: 1 })
+    .select('title subtitle buttonText image linkType linkValue devices priority platform placements placement')
+    .lean();
+
+  res.status(200).json({ success: true, data: banners });
+});
+
+// ─── GET /banners/platform/:platform/placement/:placement ────────────────────────
+// Returns live banners for a specific platform AND placement
+const getBannersByPlatformAndPlacement = catchAsync(async (req, res) => {
+  const { platform, placement } = req.params;
+
+  
+  if (!['web', 'mobile'].includes(platform)) {
+    throw new AppError('Invalid platform. Must be "web" or "mobile"', 400);
+  }
+
+  const now = new Date();
+
+  const banners = await Banner.find({
+    $or: [
+      { platform: platform },
+      { platform: 'both' },
+    ],
+    $and: [
+      { $or: [{ placement: placement }, { placements: { $in: [placement] } }] },
+      { $or: [{ startsAt: null }, { startsAt: { $lte: now } }] },
+      { $or: [{ endsAt: null },   { endsAt:   { $gte: now } }] },
+    ],
+    status: 'live',
+  })
+    .sort({ priority: 1 })
+    .select('title subtitle buttonText image linkType linkValue devices priority platform placements placement')
     .lean();
 
   res.status(200).json({ success: true, data: banners });
@@ -202,6 +305,8 @@ module.exports = {
   adminToggleBannerStatus,
   // public
   getBannersByPlacement,
+  getBannersByPlatform,
+  getBannersByPlatformAndPlacement,
   trackBannerClick,
   trackBannerImpression,
 };
