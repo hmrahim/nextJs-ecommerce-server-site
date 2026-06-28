@@ -17,32 +17,14 @@ const app = express();
    GLOBAL MIDDLEWARE
 ════════════════════════════════════════════════════ */
 app.use(helmet());
-
 app.use(
   cors({
-    origin: function (origin, callback) {
-      const allowedOrigins = [
-        'http://localhost:3000',
-        'http://localhost:3001',
-        'https://www.moom24.com',
-        'https://moom24.com',
-        'http://localhost:8081',
-        process.env.CLIENT_ORIGIN,
-      ].filter(Boolean);
-
-      // Postman বা server-to-server call এর জন্য (origin নেই)
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS blocked: ${origin}`));
-      }
-    },
+    origin: true, // ✅ সব domain allow
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   })
 );
+
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
