@@ -21,4 +21,5 @@ module.exports = {
   AuditLog:       require('./AuditLog.model'),
   Banner:         require('./BannerModel'),
   Blog:           require('./BlogModel'),
+  Quotation:      require('./QuotationModel'),
 };

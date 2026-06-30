@@ -5,6 +5,7 @@ const express = require('express');
 const router = express.Router();
 
 // ── Auth ──────────────────────────────────────────────────
+router.use(require('./userRoutes'));    
 router.use( require('./routes'));
 router.use( require('./categoryRoute'));
 router.use( require('./productRoute'));
@@ -20,5 +21,6 @@ router.use( require('./couponRoutes'));
 router.use( require('./orderRoutes'));
 router.use( require('./wishlistRoutes'));
 router.use( require('./flashSaleRoutes'));
+router.use( require('./quotationRoutes'));
 
 module.exports = router;
