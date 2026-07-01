@@ -148,9 +148,10 @@ exports.trackVisit = async (req, res) => {
       screenResolution = null,
       connectionType = null,
       language = null,
+      ip: bodyIp = null,
     } = req.body;
 
-    const ip = getClientIp(req);
+    const ip = bodyIp || getClientIp(req);
     const { device, os, browser } = parseUserAgent(req.headers['user-agent'] || '');
     const source = classifySource(referrer, req.headers.host);
 
@@ -206,9 +207,16 @@ exports.trackVisit = async (req, res) => {
       update.$set.isRegistered = true;
     }
 
-    await Visitor.findOneAndUpdate({ sessionId }, update, { upsert: true, new: true });
+    const doc = await Visitor.findOneAndUpdate({ sessionId }, update, { upsert: true, new: true }).lean();
 
-    return res.status(200).json({ success: true });
+    return res.status(200).json({
+      success: true,
+      geo: {
+        city: doc.city || 'Unknown',
+        postalCode: doc.postalCode || '',
+        country: doc.country || ''
+      }
+    });
   } catch (err) {
     // Tracking must never break the site — log and move on.
     console.error('trackVisit error:', err.message);
