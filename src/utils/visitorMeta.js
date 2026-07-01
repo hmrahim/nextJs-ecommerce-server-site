@@ -132,6 +132,29 @@ async function lookupGeo(ip) {
     };
   }
 }
+async function reverseGeocode(lat, lng) {
+  if (!lat || !lng) return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=en`,
+      {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Moom24-Server/1.0 (contact@moom24.com)'
+        }
+      }
+    );
+    clearTimeout(timeout);
+    const json = await res.json();
+    return json.display_name || null;
+  } catch (err) {
+    logger.warn(`Reverse geocoding failed for ${lat}, ${lng}: ${err.message}`);
+    return null;
+  }
+}
 
 module.exports = {
   getClientIp,
@@ -140,4 +163,5 @@ module.exports = {
   classifySource,
   currencyForCountry,
   lookupGeo,
+  reverseGeocode,
 };

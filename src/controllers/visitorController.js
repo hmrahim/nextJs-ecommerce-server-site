@@ -8,6 +8,7 @@ const {
   classifySource,
   currencyForCountry,
   lookupGeo,
+  reverseGeocode,
 } = require('../utils/visitorMeta');
 
 const MAX_PAGES_STORED = 50;
@@ -86,6 +87,7 @@ function serialize(v) {
     ip: v.ip || 'Unknown',
     country: `${flagEmoji(v.countryCode)} ${v.country}`,
     city: v.city,
+    region: v.region || 'Unknown',
     device: v.device,
     os: v.os,
     browser: v.browser,
@@ -98,6 +100,7 @@ function serialize(v) {
 
     lat: v.lat,
     lng: v.lng,
+    streetAddress: v.streetAddress || null,
     timezone: v.timezone,
     isp: v.isp || 'Unknown',
     postalCode: v.postalCode || '—',
@@ -121,6 +124,7 @@ function serialize(v) {
     userId: v.userId ? String(v.userId) : null,
     email: v.email,
 
+    pages: v.pages || [],
     isReturning: v.isReturning,
     visitCount: v.visitCount,
   };
@@ -135,7 +139,7 @@ function serialize(v) {
 // POST /track/visit  — called on every page view from the frontend
 exports.trackVisit = async (req, res) => {
   try {
-    const sessionId = req.headers['x-session-id'] || req.body.sessionId;
+    const sessionId = req.headers['x-visitor-session-id'] || req.headers['x-session-id'] || req.body.sessionId;
     if (!sessionId) return res.status(200).json({ success: false, message: 'No session id' });
 
     const {
@@ -215,7 +219,7 @@ exports.trackVisit = async (req, res) => {
 // POST /track/event — scroll depth / click count / cart / purchase pings
 exports.trackEvent = async (req, res) => {
   try {
-    const sessionId = req.headers['x-session-id'] || req.body.sessionId;
+    const sessionId = req.headers['x-visitor-session-id'] || req.headers['x-session-id'] || req.body.sessionId;
     if (!sessionId) return res.status(200).json({ success: false });
 
     const { type, value } = req.body;
@@ -228,6 +232,21 @@ exports.trackEvent = async (req, res) => {
           { $set: { scrollDepth: Math.min(100, Number(value) || 0), lastActiveAt: new Date() } }
         );
         return res.status(200).json({ success: true });
+      case 'gps_coords':
+        if (value && value.includes(',')) {
+          const [latStr, lngStr] = value.split(',');
+          const lat = Number(latStr);
+          const lng = Number(lngStr);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            const streetAddress = await reverseGeocode(lat, lng);
+            await Visitor.updateOne(
+              { sessionId },
+              { $set: { lat, lng, streetAddress, lastActiveAt: new Date() } }
+            );
+            return res.status(200).json({ success: true });
+          }
+        }
+        return res.status(200).json({ success: false, message: 'Invalid coordinates' });
       case 'click':
         update.$inc = { clickCount: 1 };
         break;
@@ -317,8 +336,8 @@ exports.getStats = async (req, res) => {
     const { start, end, prevStart, prevEnd } = getRangeDates(range);
 
     const [curr, prev, liveNow] = await Promise.all([
-      Visitor.find({ firstSeenAt: { $gte: start, $lte: end } }).select('ip pagesVisited firstSeenAt lastActiveAt').lean(),
-      Visitor.find({ firstSeenAt: { $gte: prevStart, $lte: prevEnd } }).select('ip').lean(),
+      Visitor.find({ lastActiveAt: { $gte: start, $lte: end } }).select('ip pagesVisited firstSeenAt lastActiveAt').lean(),
+      Visitor.find({ lastActiveAt: { $gte: prevStart, $lte: prevEnd } }).select('ip').lean(),
       Visitor.countDocuments({ lastActiveAt: { $gte: new Date(Date.now() - ONLINE_MS) } }),
     ]);
 
@@ -404,7 +423,7 @@ exports.getByCountry = async (req, res) => {
     const { start, end } = getRangeDates(range);
 
     const rows = await Visitor.aggregate([
-      { $match: { firstSeenAt: { $gte: start, $lte: end } } },
+      { $match: { lastActiveAt: { $gte: start, $lte: end } } },
       { $group: { _id: { country: '$country', countryCode: '$countryCode', city: '$city' }, visitors: { $sum: 1 } } },
       { $sort: { visitors: -1 } },
       { $limit: Number(limit) },
@@ -434,7 +453,7 @@ exports.getByDevice = async (req, res) => {
     const { start, end } = getRangeDates(range);
 
     const rows = await Visitor.aggregate([
-      { $match: { firstSeenAt: { $gte: start, $lte: end } } },
+      { $match: { lastActiveAt: { $gte: start, $lte: end } } },
       { $group: { _id: '$device', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]);
@@ -465,7 +484,7 @@ exports.getBySource = async (req, res) => {
     const { start, end } = getRangeDates(range);
 
     const rows = await Visitor.aggregate([
-      { $match: { firstSeenAt: { $gte: start, $lte: end } } },
+      { $match: { lastActiveAt: { $gte: start, $lte: end } } },
       { $group: { _id: '$source', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]);
@@ -512,11 +531,11 @@ exports.getChartData = async (req, res) => {
     }
 
     const overallStart = periods[0].start;
-    const rows = await Visitor.find({ firstSeenAt: { $gte: overallStart } })
-      .select('firstSeenAt pagesVisited').lean();
+    const rows = await Visitor.find({ lastActiveAt: { $gte: overallStart } })
+      .select('firstSeenAt lastActiveAt pagesVisited').lean();
 
     const data = periods.map((p) => {
-      const inRange = rows.filter((r) => r.firstSeenAt >= p.start && r.firstSeenAt < p.end);
+      const inRange = rows.filter((r) => r.lastActiveAt >= p.start && r.lastActiveAt < p.end);
       return {
         day: p.day,
         visitors: inRange.length,

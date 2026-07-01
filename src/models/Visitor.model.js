@@ -30,6 +30,7 @@ const visitorSchema = new mongoose.Schema(
     region:     { type: String, trim: true, default: null },
     lat:        { type: Number, default: null },
     lng:        { type: Number, default: null },
+    streetAddress: { type: String, default: null },
     timezone:   { type: String, default: null },
     isp:        { type: String, default: null },
     postalCode: { type: String, default: null },
