@@ -4,6 +4,7 @@ const Cart           = require('../models/Cart.model');
 const Product        = require('../models/ProductModel');
 const ProductVariant = require('../models/ProductVariantModel');
 const FlashSale      = require('../models/FlashSaleModel');
+const Bundle         = require('../models/Bundle.model');
 const { ApiResponse, ApiError } = require('../utils/apiHelpers');
 const catchAsync     = require('../utils/catchAsync');
 
@@ -193,6 +194,14 @@ const serializeCart = async (cart) => {
 
   const productMap = new Map(products.map((p) => [String(p._id), p]));
 
+  // Pre-load all referenced bundles.
+  const bundleIds = [...new Set(cart.items.map((i) => i.bundleId).filter(Boolean).map(String))];
+  let bundles = [];
+  if (bundleIds.length) {
+    bundles = await Bundle.find({ _id: { $in: bundleIds } }).lean();
+  }
+  const bundleMap = new Map(bundles.map((b) => [String(b._id), b]));
+
   // Pre-load all referenced variants from the separate collection.
   const variantSkus = cart.items
     .filter((i) => i.variantSku && i.variantSku !== 'default')
@@ -249,21 +258,37 @@ const serializeCart = async (cart) => {
       }
     }
 
+    if (item.bundleId) {
+      const bundle = bundleMap.get(String(item.bundleId));
+      if (bundle) {
+        const bundleProd = bundle.products.find(p => String(p.productId) === String(item.productId));
+        if (bundleProd) {
+          const originalPriceSum = bundle.products.reduce((s, p) => s + p.price * p.quantity, 0);
+          if (originalPriceSum > 0) {
+            const ratio = bundle.bundlePrice / originalPriceSum;
+            livePrice = Math.round(bundleProd.price * ratio * 100) / 100;
+          }
+        }
+      }
+    }
+
     // Apply active flash-sale discount (if any) on the live price for read responses
     let flashSale = null;
-    try {
-      const eff = await FlashSale.getEffectivePriceForProduct(item.productId, livePrice);
-      if (eff && eff.salePrice < livePrice) {
-        flashSale = {
-          saleId:        eff.saleId,
-          discountType:  eff.discountType,
-          discountValue: eff.discountValue,
-          endTime:       eff.endTime,
-          originalPrice: livePrice,
-        };
-        livePrice = eff.salePrice;
-      }
-    } catch { /* ignore */ }
+    if (!item.bundleId) {
+      try {
+        const eff = await FlashSale.getEffectivePriceForProduct(item.productId, livePrice);
+        if (eff && eff.salePrice < livePrice) {
+          flashSale = {
+            saleId:        eff.saleId,
+            discountType:  eff.discountType,
+            discountValue: eff.discountValue,
+            endTime:       eff.endTime,
+            originalPrice: livePrice,
+          };
+          livePrice = eff.salePrice;
+        }
+      } catch { /* ignore */ }
+    }
 
     return {
       productId:    item.productId,
@@ -274,6 +299,7 @@ const serializeCart = async (cart) => {
       lineTotal:    item.price * item.qty,
       stock:        liveStock,
       inStock:      liveStock === Infinity || liveStock >= item.qty,
+      bundleId:     item.bundleId || null,
       product: product
         ? {
             id:       product._id,
@@ -328,18 +354,35 @@ exports.addItem = catchAsync(async (req, res) => {
     req.body.variant?.variantSku ||
     'default';
 
-  const { productId } = req.body;
+  const { productId, bundleId = null } = req.body;
 
   if (!productId) throw new ApiError(400, 'productId is required.');
   if (!Number.isInteger(qty) || qty < 1) {
     throw new ApiError(400, 'qty must be a positive integer.');
   }
 
+  let bundle = null;
+  if (bundleId) {
+    bundle = await Bundle.findOne({ _id: bundleId, isActive: true }).lean();
+  }
+
   const lineItem = await resolveLineItem(productId, variantSku);
+  if (bundle) {
+    const bundleProd = bundle.products.find(p => String(p.productId) === String(productId));
+    if (bundleProd) {
+      const originalPriceSum = bundle.products.reduce((s, p) => s + p.price * p.quantity, 0);
+      if (originalPriceSum > 0) {
+        const ratio = bundle.bundlePrice / originalPriceSum;
+        lineItem.price = Math.round(bundleProd.price * ratio * 100) / 100;
+      }
+    }
+  }
 
   const cart = await findOrCreateCart(req);
   const existing = cart.items.find(
-    (i) => String(i.productId) === String(lineItem.productId) && i.variantSku === lineItem.variantSku
+    (i) => String(i.productId) === String(lineItem.productId) && 
+           i.variantSku === lineItem.variantSku &&
+           String(i.bundleId || '') === String(bundleId || '')
   );
 
   const newQty = (existing?.qty || 0) + qty;
@@ -357,7 +400,8 @@ exports.addItem = catchAsync(async (req, res) => {
       productId:  lineItem.productId,
       variantSku: lineItem.variantSku || 'default',
       qty,
-      price: lineItem.price,
+      price:      lineItem.price,
+      bundleId:   bundleId || null,
     });
   }
 
@@ -376,6 +420,7 @@ exports.updateItem = catchAsync(async (req, res) => {
   // qty is already coerced to int by validator (.toInt())
   const qty = Number(req.body.qty);
   const variantSku = req.body.variantSku || 'default';
+  const bundleId = req.body.bundleId || null;
 
   if (!Number.isInteger(qty) || qty < 1) {
     throw new ApiError(400, 'qty must be a positive integer.');
@@ -383,7 +428,9 @@ exports.updateItem = catchAsync(async (req, res) => {
 
   const cart = await findOrCreateCart(req);
   const item = cart.items.find(
-    (i) => String(i.productId) === String(productId) && i.variantSku === variantSku
+    (i) => String(i.productId) === String(productId) && 
+           i.variantSku === variantSku && 
+           String(i.bundleId || '') === String(bundleId || '')
   );
 
   if (!item) throw new ApiError(404, 'Item not found in cart.');
@@ -407,12 +454,15 @@ exports.updateItem = catchAsync(async (req, res) => {
 exports.removeItem = catchAsync(async (req, res) => {
   const { productId } = req.params;
   const variantSku = req.body?.variantSku || req.query?.variantSku || 'default';
+  const bundleId = req.body?.bundleId || req.query?.bundleId || null;
 
   const cart = await findOrCreateCart(req);
   const before = cart.items.length;
 
   cart.items = cart.items.filter(
-    (i) => !(String(i.productId) === String(productId) && i.variantSku === variantSku)
+    (i) => !(String(i.productId) === String(productId) && 
+             i.variantSku === variantSku && 
+             String(i.bundleId || '') === String(bundleId || ''))
   );
 
   if (cart.items.length === before) {

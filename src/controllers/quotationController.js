@@ -70,6 +70,18 @@ exports.createRequest = catchAsync(async (req, res, next) => {
     notes: notes || '',
   });
 
+  try {
+    const { createAdminNotification } = require('./notification.controller');
+    await createAdminNotification({
+      type: 'system',
+      title: 'New Quotation Requested',
+      message: `Company: ${companyName} requested quotation for ${items.length} items. Contact: ${contactPerson}`,
+      data: { quotationId: quotation._id }
+    });
+  } catch (err) {
+    console.error('Failed to create quotation admin notification:', err);
+  }
+
   return ApiResponse.created(res, quotation, 'Quotation request submitted successfully');
 });
 

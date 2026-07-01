@@ -29,5 +29,7 @@ router.use( require('./inventoryRoutes'));
 router.use( require('./warehouseRoutes'));
 router.use( require('./bundleRoutes'));
 router.use( require('./visitorRoutes'));
+router.use( require('./customerRoutes'));
+router.use( require('./notificationRoutes'));
 
 module.exports = router;

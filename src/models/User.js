@@ -65,6 +65,16 @@ const userSchema = new mongoose.Schema(
     avatar:        { type: String, default: null },
     isActive:      { type: Boolean, default: true },
     emailVerified: { type: Boolean, default: false },
+    isBanned:      { type: Boolean, default: false },
+    banReason:     { type: String, default: '' },
+    tags:          { type: [String], default: [] },
+    notes:         [
+      {
+        text:      { type: String, required: true },
+        author:    { type: String, default: 'Admin' },
+        createdAt: { type: Date, default: Date.now },
+      }
+    ],
 
     // ── ✅ Email OTP for verification ───────────────────────────
     emailOtp:        { type: String, select: false },

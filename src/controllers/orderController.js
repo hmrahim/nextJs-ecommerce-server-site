@@ -34,6 +34,7 @@ const Cart    = require('../models/Cart.model');
 const Product = require('../models/ProductModel');
 const ProductVariant = require('../models/ProductVariantModel');
 const Coupon  = require('../models/CouponModel');
+const Bundle  = require('../models/Bundle.model');
 const { broadcast } = require('../utils/sseManager');
 const { emitChange } = require('../utils/socket');
 
@@ -183,6 +184,22 @@ exports.createOrder = async (req, res) => {
         }
         if (variant.image) variantImage = variant.image;
       }
+
+      // If item is part of a bundle, override the price with the bundle-discounted price
+      if (item.bundleId) {
+        const bundle = await Bundle.findOne({ _id: item.bundleId, isActive: true }).lean();
+        if (bundle) {
+          const bundleProd = bundle.products.find(p => String(p.productId) === String(item.productId));
+          if (bundleProd) {
+            const originalPriceSum = bundle.products.reduce((s, p) => s + p.price * p.quantity, 0);
+            if (originalPriceSum > 0) {
+              const ratio = bundle.bundlePrice / originalPriceSum;
+              currentPrice = Math.round(bundleProd.price * ratio * 100) / 100;
+            }
+          }
+        }
+      }
+
       if (currentStock < item.quantity) {
         return res.status(409).json({ message: `"${item.productName}" এ মাত্র ${currentStock}টি available।` });
       }
@@ -258,6 +275,18 @@ exports.createOrder = async (req, res) => {
 
     // 🔔 Realtime: notify admin dashboard about the new order
     emitOrderEvent('order_created', order);
+
+    try {
+      const { createAdminNotification } = require('./notification.controller');
+      await createAdminNotification({
+        type: 'order',
+        title: 'New Order Received',
+        message: `Order #${order.orderNumber || order._id.toString().slice(-6).toUpperCase()} placed by ${shippingAddress.firstName} ${shippingAddress.lastName} for SAR ${order.total}.`,
+        data: { orderId: order._id }
+      });
+    } catch (err) {
+      console.error('Failed to create order admin notification:', err);
+    }
 
     return res.status(201).json({ message: 'Order placed successfully', data: order });
   } catch (err) {

@@ -54,7 +54,6 @@ const bundleSchema = new mongoose.Schema(
 );
 
 /* ── Indexes ─────────────────────────────────────────────── */
-bundleSchema.index({ slug: 1 }, { unique: true });
 bundleSchema.index({ isActive: 1, isFeatured: 1 });
 bundleSchema.index({ validUntil: 1 });
 bundleSchema.index({ name: 'text', description: 'text', tags: 'text' });

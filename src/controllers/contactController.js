@@ -146,6 +146,18 @@ exports.submitContact = async (req, res) => {
       message,
     });
 
+    try {
+      const { createAdminNotification } = require('./notification.controller');
+      await createAdminNotification({
+        type: 'system',
+        title: 'New Contact Inquiry',
+        message: `Inquiry from ${name} (${email}): "${contact.subject}"`,
+        data: { contactId: contact._id }
+      });
+    } catch (err) {
+      console.error('Failed to create contact admin notification:', err);
+    }
+
     // Notify admin — never block the response if email sending fails
     try {
       await sendBrevoEmail({

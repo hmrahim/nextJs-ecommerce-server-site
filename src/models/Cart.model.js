@@ -6,6 +6,7 @@ const cartItemSchema = new mongoose.Schema(
     variantSku:{ type: String, required: true },
     qty:       { type: Number, required: true, min: 1 },
     price:     { type: Number, required: true, min: 0 },
+    bundleId:  { type: mongoose.Schema.Types.ObjectId, ref: 'Bundle', default: null },
   },
   { _id: false }
 );

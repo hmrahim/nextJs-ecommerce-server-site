@@ -22,7 +22,6 @@ const categorySchema = new mongoose.Schema(
 );
 
 /* ── Indexes ─────────────────────────────────────────────── */
-categorySchema.index({ slug: 1 }, { unique: true });
 categorySchema.index({ parentId: 1 });
 categorySchema.index({ isActive: 1, sortOrder: 1 });
 

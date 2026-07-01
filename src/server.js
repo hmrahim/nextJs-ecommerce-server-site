@@ -2,13 +2,14 @@
 /* ── Load env vars FIRST — before any other require ─────── */
 require('dotenv').config();
 
+const connectDB = require('./config/database'); // 🔴 Load database and register global plugins FIRST
 const http      = require('http');
-const app       = require('./app');
-const connectDB = require('./config/database');
+const app       = require('./app');              // 🟢 Now load app (and models) so plugins are applied
 const logger    = require('./utils/logger');
 const { initSocket } = require('./utils/socket');
 
 const PORT = process.env.PORT || 5000;
+
 console.log('MONGO_URI:', process.env.MONGO_URI ? 'পাওয়া গেছে ✅' : 'পাওয়া যায়নি ❌'); // ← এটা add করো
 
 /* ════════════════════════════════════════════════════

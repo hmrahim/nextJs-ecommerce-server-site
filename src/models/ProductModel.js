@@ -99,8 +99,6 @@ const productSchema = new mongoose.Schema(
 );
 
 /* ── Indexes ─────────────────────────────────────────────── */
-productSchema.index({ slug: 1 },         { unique: true });
-productSchema.index({ sku: 1 },          { unique: true });
 productSchema.index({ category: 1 });
 productSchema.index({ subCategory: 1 });
 productSchema.index({ subSubCategory: 1 });

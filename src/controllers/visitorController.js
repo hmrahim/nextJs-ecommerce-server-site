@@ -2,6 +2,7 @@
 'use strict';
 
 const Visitor = require('../models/Visitor.model');
+const { emitChange } = require('../utils/socket');
 const {
   getClientIp,
   parseUserAgent,
@@ -177,6 +178,11 @@ exports.trackVisit = async (req, res) => {
       const geo = await lookupGeo(ip);
       const currency = currencyForCountry(geo.countryCode);
 
+      let streetAddress = null;
+      if (geo.lat && geo.lng) {
+        streetAddress = await reverseGeocode(geo.lat, geo.lng);
+      }
+
       // Best-effort "returning visitor" check — same identity seen before
       const identityQuery = req.user
         ? { userId: req.user._id }
@@ -189,6 +195,7 @@ exports.trackVisit = async (req, res) => {
         sessionId,
         ip,
         ...geo,
+        streetAddress,
         currency,
         source,
         referrerUrl: referrer,
@@ -209,12 +216,16 @@ exports.trackVisit = async (req, res) => {
 
     const doc = await Visitor.findOneAndUpdate({ sessionId }, update, { upsert: true, new: true }).lean();
 
+    // Notify admins of visitor activity
+    emitChange('Visitor', 'update', { id: doc._id });
+
     return res.status(200).json({
       success: true,
       geo: {
         city: doc.city || 'Unknown',
         postalCode: doc.postalCode || '',
-        country: doc.country || ''
+        country: doc.country || '',
+        streetAddress: doc.streetAddress || null
       }
     });
   } catch (err) {
@@ -239,6 +250,7 @@ exports.trackEvent = async (req, res) => {
           { sessionId, scrollDepth: { $lt: Number(value) || 0 } },
           { $set: { scrollDepth: Math.min(100, Number(value) || 0), lastActiveAt: new Date() } }
         );
+        emitChange('Visitor', 'update');
         return res.status(200).json({ success: true });
       case 'gps_coords':
         if (value && value.includes(',')) {
@@ -251,6 +263,7 @@ exports.trackEvent = async (req, res) => {
               { sessionId },
               { $set: { lat, lng, streetAddress, lastActiveAt: new Date() } }
             );
+            emitChange('Visitor', 'update');
             return res.status(200).json({ success: true });
           }
         }
@@ -269,6 +282,7 @@ exports.trackEvent = async (req, res) => {
     }
 
     await Visitor.updateOne({ sessionId }, update);
+    emitChange('Visitor', 'update');
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error('trackEvent error:', err.message);
@@ -563,6 +577,7 @@ exports.deleteOne = async (req, res) => {
   try {
     const v = await Visitor.findByIdAndDelete(req.params.id);
     if (!v) return res.status(404).json({ message: 'Visitor not found' });
+    emitChange('Visitor', 'delete', { id: req.params.id });
     return res.json({ success: true });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to delete visitor' });
@@ -577,6 +592,7 @@ exports.deleteBulk = async (req, res) => {
       return res.status(400).json({ message: 'ids array is required' });
     }
     const result = await Visitor.deleteMany({ _id: { $in: ids } });
+    emitChange('Visitor', 'delete');
     return res.json({ success: true, deletedCount: result.deletedCount });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to bulk-delete visitors' });

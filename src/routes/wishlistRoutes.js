@@ -15,7 +15,7 @@ const {
   moveAllToCart,
 } = require('../controllers/wishlistController');
 
-router.use(protect);
+router.use('/wishlist', protect);
 
 router.get('/wishlist', getWishlist);
 router.delete('/wishlist', clearWishlist);
