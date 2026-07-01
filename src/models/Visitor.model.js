@@ -78,7 +78,7 @@ visitorSchema.index({ lastActiveAt: -1 });
 visitorSchema.index({ ip: 1 });
 visitorSchema.index({ userId: 1 });
 visitorSchema.index({ firstSeenAt: -1 });
-visitorSchema.index({ ip: 'text', city: 'text', country: 'text' });
+visitorSchema.index({ ip: 'text', city: 'text', country: 'text' }, { language_override: 'none' });
 // Auto-purge sessions that have been inactive for 90 days
 visitorSchema.index({ lastActiveAt: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
 
