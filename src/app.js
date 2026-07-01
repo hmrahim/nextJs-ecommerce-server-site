@@ -14,6 +14,17 @@ const errorHandler = require('./middleware/errorHandler');
 const app = express();
 
 /* ════════════════════════════════════════════════════
+   TRUST PROXY
+   ════════════════════════════════════════════════════
+   FIX: was missing. Behind Railway / any reverse proxy,
+   req.ip and req.socket.remoteAddress resolve to the
+   proxy's internal IP, not the real visitor IP — this
+   was silently corrupting visitor geo/country/city data
+   even on requests that did save correctly.
+════════════════════════════════════════════════════ */
+app.set('trust proxy', 1);
+
+/* ════════════════════════════════════════════════════
    GLOBAL MIDDLEWARE
 ════════════════════════════════════════════════════ */
 app.use(helmet());

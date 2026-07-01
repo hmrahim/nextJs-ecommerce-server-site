@@ -394,3 +394,37 @@ exports.updateStock = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
+
+
+// ─── GET /admin/products/search ─────────────────────────────────────────────
+// Lightweight search used by pickers (e.g. Bundle builder). Query: q, limit
+exports.searchProductsAdmin = async (req, res) => {
+    try {
+        const { q = '', limit = 20 } = req.query;
+
+        const filter = { isActive: true };
+        if (q.trim()) {
+            const regex = new RegExp(q.trim(), 'i');
+            filter.$or = [{ name: regex }, { sku: regex }];
+        }
+
+        const products = await Product.find(filter)
+            .select('name sku price stock images')
+            .limit(Number(limit))
+            .lean();
+
+        const shaped = products.map((p) => ({
+            _id:   String(p._id),
+            name:  p.name,
+            sku:   p.sku,
+            price: p.price,
+            stock: p.stock,
+            image: p.images?.[0]?.url || null,
+        }));
+
+        res.status(200).json({ success: true, data: shaped });
+    } catch (err) {
+        console.error('admin.searchProductsAdmin:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};

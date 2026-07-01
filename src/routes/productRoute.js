@@ -9,6 +9,7 @@ const {
   hardDeleteProduct,
   updateStatus,
   updateStock,
+  searchProductsAdmin,
 } = require('../controllers/productController/productControllerAdmin');
 const { protect } = require('../middleware/authMiddleware');
 const {
@@ -23,6 +24,7 @@ const {
 const router = express.Router();
 
 /* ─── Admin ───────────────────────────────────────────── */
+router.get   ('/admin/products/search',       protect, searchProductsAdmin);
 router.get   ('/admin/products',              protect, getAllProducts);
 router.get   ('/admin/products/:id',          protect, getProductById);
 router.post  ('/admin/products',              protect, createProduct);

@@ -22,5 +22,12 @@ router.use( require('./orderRoutes'));
 router.use( require('./wishlistRoutes'));
 router.use( require('./flashSaleRoutes'));
 router.use( require('./quotationRoutes'));
+router.use( require('./contactRoutes'));
+router.use( require('./emailRoutes'));
+router.use( require('./analyticsRoutes'));
+router.use( require('./inventoryRoutes'));
+router.use( require('./warehouseRoutes'));
+router.use( require('./bundleRoutes'));
+router.use( require('./visitorRoutes'));
 
 module.exports = router;
